@@ -1,8 +1,16 @@
-def predict_rating(user_id: int, movie_id: int) -> float:
-    """
-    Return a temporary fake rating.
+import  joblib
+import  pandas as pd
 
-    This function represents the prediction logic that will
-    later be replaced by a real machine learning model.
-    """
-    return 4.2
+
+
+MODEL_PATH="ml/model.joblib"
+model=joblib.load(MODEL_PATH)
+
+def predict_rating(user_id: int, movie_id: int) -> float:
+    prediction = model.predict(
+        pd.DataFrame(
+            [[user_id, movie_id]],
+            columns=["user_id", "movie_id"]
+        )
+    )
+    return float(prediction[0])
