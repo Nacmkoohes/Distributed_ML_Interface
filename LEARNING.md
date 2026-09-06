@@ -48,3 +48,28 @@ The basic flow is:
     Prediction
       ↓
     Client
+## Day 2 — API Architecture and Separation of Concerns
+
+### Separation of Concerns
+
+The API layer should handle HTTP requests and responses,
+while prediction logic should be isolated in a separate service.
+
+Current architecture:
+
+Client → FastAPI → Prediction Service
+
+### Prediction Service
+
+The prediction service contains the logic responsible for
+generating predictions.
+
+For now, the project uses a temporary fake prediction.
+This will later be replaced by a real machine learning model.
+
+### Automated Testing
+
+Pytest is used to verify that the prediction service
+returns the expected data type.
+
+This allows the project to detect regressions automatically.
