@@ -1,16 +1,22 @@
-# This is a sample Python script.
+from pydantic import BaseModel
+from fastapi import FastAPI
 
-# Press ⌃R to execute it or replace it with your code.
-# Press Double ⇧ to search everywhere for classes, files, tool windows, actions, and settings.
+app=FastAPI()
+
+class PredictionRequest(BaseModel):
+    user_id:int
+    movie_id:int
+
+@app.post('/predict')
+def predict(request:PredictionRequest):
+    return {
+        "user_id": request.user_id,
+        "movie_id": request.movie_id,
+        "predicted_rating": 4.2
+    }
 
 
-def print_hi(name):
-    # Use a breakpoint in the code line below to debug your script.
-    print(f'Hi, {name}')  # Press ⌘F8 to toggle the breakpoint.
 
-
-# Press the green button in the gutter to run the script.
-if __name__ == '__main__':
-    print_hi('PyCharm')
-
-# See PyCharm help at https://www.jetbrains.com/help/pycharm/
+@app.get('/health')
+def health():
+    return {'status':'ok'}
