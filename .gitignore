@@ -25,3 +25,5 @@ htmlcov/
 
 # Logs
 *.log
+
+ml/model.joblib
