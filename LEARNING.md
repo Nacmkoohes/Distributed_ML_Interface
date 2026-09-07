@@ -1,109 +1,260 @@
-# What I Learned
+# Learning Log — Distributed ML Inference Platform
 
-This document records the main concepts I learn while building
-the Distributed ML Inference Platform.
+This document records the concepts, technical decisions, implementation steps, and lessons learned while building the Distributed ML Inference Platform.
 
-## Day 1 — Client, Server, API, and ML Inference
+The goal is not only to build a working application, but to understand how machine learning inference can be deployed, distributed, monitored, tested, and evaluated under different workloads.
 
-### Client
+---
 
-A client is a program that sends a request to a server.
+# Day 1 — FastAPI and API Fundamentals
 
-Examples include:
-- Web applications
-- Mobile applications
-- Postman
-- Python programs
+## Concepts Learned
 
-### Server
+* Client-server architecture
+* REST API
+* HTTP methods
+* GET vs POST
+* Request body
+* JSON
+* Pydantic models
+* Input validation
+* FastAPI
+* Automatic API documentation
+* HTTP status codes
 
-A server is a program that receives requests and sends responses.
+## API Architecture
 
-In this project, FastAPI will be used to build the server.
+The first version of the system was a simple ML prediction API:
 
-### API
+```text
+Client
+   ↓
+FastAPI
+   ↓
+Prediction
+   ↓
+Response
+```
 
-An API provides a defined way for different software components
-to communicate with each other.
+The API provides two endpoints:
 
-For example:
+```text
+GET  /health
+POST /predict
+```
 
-    POST /predict
+## Health Endpoint
 
-can be used to send a prediction request.
+The `/health` endpoint is used to determine whether the API is running.
 
-### ML Inference
+Example response:
 
-Inference is the process of using a trained machine learning model
-to generate a prediction for new input data.
+```json
+{
+    "status": "ok"
+}
+```
 
-The basic flow is:
+## Prediction Endpoint
 
-    Client
-      ↓
-    API
-      ↓
-    ML Model
-      ↓
-    Prediction
-      ↓
-    Client
-## Day 2 — API Architecture and Separation of Concerns
+The `/predict` endpoint receives:
 
-### Separation of Concerns
+```json
+{
+    "user_id": 12,
+    "movie_id": 55
+}
+```
 
-The API layer should handle HTTP requests and responses,
-while prediction logic should be isolated in a separate service.
+and returns a prediction.
 
-Current architecture:
+## Pydantic Validation
 
-Client → FastAPI → Prediction Service
+A Pydantic model is used to validate incoming requests.
 
-### Prediction Service
+The API automatically rejects invalid request data.
 
-The prediction service contains the logic responsible for
-generating predictions.
+For example, invalid input can result in:
 
-For now, the project uses a temporary fake prediction.
-This will later be replaced by a real machine learning model.
+```text
+HTTP 422 Unprocessable Entity
+```
 
-### Automated Testing
+## Important Lesson
 
-Pytest is used to verify that the prediction service
-returns the expected data type.
+An API is an interface between a client and the underlying application logic.
 
-This allows the project to detect regressions automatically.
-## Day 3 — Machine Learning Pipeline
+The client should not need to know how the prediction is calculated.
 
-### Concepts Learned
+---
 
-* Training vs. inference
-* Features and target
+# Day 2 — Separation of Concerns and Testing
+
+## Concepts Learned
+
+* Separation of Concerns
+* Service layer
+* Modular architecture
+* Unit testing
+* Pytest
+* Dependency separation
+
+## Problem
+
+Initially, prediction logic was written directly inside the FastAPI endpoint.
+
+This creates a problem because the API layer becomes responsible for too many things.
+
+A better structure is:
+
+```text
+Client
+   ↓
+FastAPI
+   ↓
+Prediction Service
+```
+
+The API handles HTTP-related responsibilities, while the prediction service handles prediction logic.
+
+## Prediction Service
+
+Prediction logic was moved to:
+
+```text
+services/
+└── prediction.py
+```
+
+The service exposes:
+
+```python
+predict_rating(user_id, movie_id)
+```
+
+This makes the prediction logic independent from FastAPI.
+
+## Why Separation of Concerns Matters
+
+Separating responsibilities makes the system:
+
+* easier to test
+* easier to modify
+* easier to debug
+* easier to scale
+* easier to reuse
+
+This architectural principle becomes especially important when the prediction logic is later deployed inside multiple workers.
+
+## Automated Testing
+
+A unit test was added to verify the prediction service.
+
+Tests are executed using:
+
+```bash
+python -m pytest
+```
+
+### Important Environment Lesson
+
+The system had multiple Python installations.
+
+The global `pytest` command was associated with another Python installation.
+
+Therefore, the project uses:
+
+```bash
+python -m pytest
+```
+
+This ensures that tests run using the Python interpreter from the project's virtual environment.
+
+---
+
+# Day 3 — Machine Learning Pipeline
+
+## Concepts Learned
+
+* Machine Learning training
+* Machine Learning inference
+* Features
+* Target
 * Regression
-* Training and test datasets
+* Training dataset
+* Test dataset
 * Train/test split
 * Random Forest Regressor
-* Mean Squared Error (MSE)
+* Mean Squared Error
 * Model persistence
-* Why model training and inference should be separated
+* Offline training
 
-### ML Problem
+## ML Problem
 
 The project uses a simplified movie-rating prediction problem.
 
 Input features:
 
-* `user_id`
-* `movie_id`
+```text
+user_id
+movie_id
+```
 
 Target:
 
-* `rating`
+```text
+rating
+```
 
-The model learns a relationship between the input features and
-the user's movie rating.
+The task is treated as a regression problem because the target is a numerical value.
 
-### Training Pipeline
+## Training vs Inference
+
+A major distinction learned during this stage was:
+
+### Training
+
+Training is the process where the model learns patterns from data.
+
+```text
+Dataset
+   ↓
+Features + Target
+   ↓
+Training
+   ↓
+Trained Model
+```
+
+### Inference
+
+Inference happens when a trained model receives new input and produces a prediction.
+
+```text
+Input
+   ↓
+Trained Model
+   ↓
+Prediction
+```
+
+Training and inference are therefore separate processes.
+
+## Dataset
+
+A small MovieLens-style dataset was created for the initial implementation.
+
+The dataset contains:
+
+```text
+user_id
+movie_id
+rating
+```
+
+The dataset is intentionally small because the goal at this stage is to build and understand the inference infrastructure rather than optimize recommendation accuracy.
+
+## Training Pipeline
 
 The training process is:
 
@@ -123,50 +274,54 @@ Evaluate with MSE
 Save Model
 ```
 
-The trained model is saved as:
+## Random Forest
+
+A Random Forest Regressor was selected as the initial model.
+
+It provides a simple way to create a real ML inference pipeline without making the ML model itself the main research contribution.
+
+The main research focus will later be distributed inference and system performance.
+
+## Model Evaluation
+
+Mean Squared Error (MSE) is used as an initial evaluation metric.
+
+MSE measures the average squared difference between the predicted values and the actual target values.
+
+## Model Persistence
+
+The trained model is saved using `joblib`:
 
 ```text
 ml/model.joblib
 ```
 
-### Important Design Decision
+This allows the inference service to load an already-trained model instead of training the model every time the API starts.
 
-Model training is separated from inference.
+## Important Design Decision
 
-Training is an offline process, while inference happens when
-the API receives a prediction request.
+Training is an offline process.
 
-This separation will become important when the model is deployed
-across multiple inference workers.
+Inference is an online process.
 
-### Testing
-
-A test was added to verify that the training/inference pipeline
-produces a valid prediction.
-
-Tests are executed with:
-
-```bash
-python -m pytest
-```
+Keeping these processes separate allows the trained model to later be deployed to multiple inference workers.
 
 ---
 
-## Day 4 — ML Model Integration with FastAPI
+# Day 4 — ML Model Integration and Inference
 
-### Concepts Learned
+## Concepts Learned
 
 * Model loading
 * ML inference
-* Prediction service
-* Connecting FastAPI to a trained ML model
-* Feature names
-* Model input consistency
+* Prediction service integration
+* Feature consistency
+* Model input format
 * Unit testing ML inference
 
-### Architecture
+## Architecture
 
-The prediction pipeline became:
+The system evolved into:
 
 ```text
 Client
@@ -180,17 +335,17 @@ Saved ML Model
 Prediction
 ```
 
-The API no longer returns a hard-coded rating.
+The API no longer returns a hard-coded prediction.
 
-Instead, it loads the trained model and uses it to generate
-a prediction.
+Instead, the prediction service loads the trained model and uses it to generate the result.
 
-### Prediction Service
+## Prediction Service
 
-The prediction logic is implemented in:
+The inference logic is implemented in:
 
 ```text
-services/prediction.py
+services/
+└── prediction.py
 ```
 
 The service loads:
@@ -208,18 +363,20 @@ movie_id
 
 It then returns the predicted rating.
 
-### Feature Consistency
+## Feature Consistency
 
-The model was trained using named features:
+During inference, the model must receive features in the same structure used during training.
+
+The model was trained using:
 
 ```text
 user_id
 movie_id
 ```
 
-Therefore, inference also provides the same feature names.
+Therefore inference also provides these named features.
 
-This prevents the following warning:
+This prevents the warning:
 
 ```text
 X does not have valid feature names
@@ -227,45 +384,44 @@ X does not have valid feature names
 
 and keeps the training and inference interfaces consistent.
 
-### Testing
+## Testing
 
-The prediction service is tested for:
+The inference service is tested for:
 
-* returning a `float`
-* returning a rating between `1.0` and `5.0`
+* returning a floating-point value
+* returning a prediction within the expected rating range
 
-Tests are executed with:
+The tests are executed with:
 
 ```bash
 python -m pytest
 ```
 
-### Important Observation
+## Important Observation
 
 The current dataset is intentionally small and artificial.
 
-Therefore, the numerical prediction should not be interpreted
-as a scientifically meaningful recommendation result.
+Therefore, predictions from this model should not be interpreted as a scientifically meaningful recommendation system.
 
-The main purpose at this stage is to build a complete ML inference
-pipeline that can later be distributed across multiple workers.
+The purpose of this stage is to create a complete ML inference pipeline that can later be distributed across multiple workers.
 
 ---
 
-## Day 5 — ML Worker Abstraction
+# Day 5 — ML Workers and Load Balancing
 
-### Concepts Learned
+## Concepts Learned
 
 * Distributed ML inference
 * ML Worker
 * Worker abstraction
-* Separation between API and inference workers
 * Multiple inference instances
-* Basic role of a Load Balancer
+* Load Balancer
 * Request distribution
-* Round Robin as a load-balancing strategy
+* Round Robin
+* Circular scheduling
+* Separation between routing and inference
 
-### Architecture Evolution
+## Architecture Evolution
 
 Before introducing workers:
 
@@ -279,7 +435,7 @@ Prediction Service
 ML Model
 ```
 
-After introducing a Worker:
+After introducing the Worker abstraction:
 
 ```text
 Client
@@ -293,7 +449,7 @@ Prediction Service
 ML Model
 ```
 
-The target architecture is:
+The target distributed architecture is:
 
 ```text
                     ┌── ML Worker 1
@@ -303,13 +459,11 @@ Client → FastAPI → Load Balancer ── ML Worker 2
                     └── ML Worker 3
 ```
 
-### Why Do We Need Workers?
+## Why Do We Need Workers?
 
-A single ML inference process can become a bottleneck when many
-requests arrive at the same time.
+A single inference process can become a bottleneck when many requests arrive.
 
-Multiple workers allow inference requests to be distributed
-across independent processing instances.
+Multiple workers provide multiple inference instances that can process requests independently.
 
 This creates the foundation for studying:
 
@@ -319,7 +473,7 @@ This creates the foundation for studying:
 * resource utilization
 * fault tolerance
 
-### Worker Responsibility
+## Worker Responsibility
 
 An `MLWorker` represents one inference worker.
 
@@ -329,68 +483,291 @@ Its responsibility is to:
 2. call the prediction service
 3. return the prediction
 
-The Worker does **not** decide which worker should receive the
-request.
+The Worker does not decide which worker receives a request.
 
 That responsibility belongs to the Load Balancer.
 
-### Code Structure
+## Worker IDs
 
-The Worker abstraction is implemented in:
+Each worker has a unique identifier:
+
+```text
+worker-1
+worker-2
+worker-3
+```
+
+The worker ID makes request distribution observable during development and testing.
+
+Example:
+
+```json
+{
+    "user_id": 12,
+    "movie_id": 55,
+    "predicted_rating": 3.15,
+    "worker_id": "worker-1"
+}
+```
+
+## Round Robin Load Balancing
+
+Round Robin is a simple load-balancing strategy.
+
+Requests are assigned to workers in a circular order.
+
+For three workers:
+
+```text
+Request 1 → Worker 1
+Request 2 → Worker 2
+Request 3 → Worker 3
+Request 4 → Worker 1
+Request 5 → Worker 2
+Request 6 → Worker 3
+```
+
+The implementation maintains a current index and moves to the next worker after each request.
+
+The circular behavior is implemented using the modulo operation:
+
+```python
+(current_index + 1) % len(workers)
+```
+
+For three workers:
+
+```text
+0 → 1 → 2 → 0 → 1 → 2 → ...
+```
+
+## Load Balancer Responsibility
+
+The Load Balancer is responsible for:
+
+```text
+Incoming Request
+       ↓
+Choose Worker
+       ↓
+Forward Request
+```
+
+The Worker is responsible for:
+
+```text
+Receive Request
+       ↓
+Run ML Inference
+       ↓
+Return Prediction
+```
+
+Keeping these responsibilities separate allows different load-balancing strategies to be implemented and compared without changing the ML inference logic.
+
+## Current Implementation
+
+The project now contains:
+
+```text
+load_balancer/
+└── round_robin.py
+```
+
+and:
 
 ```text
 workers/
 └── worker.py
 ```
 
-The main class is:
+The FastAPI application creates three logical ML workers and passes them to the Round Robin load balancer.
+
+## Testing
+
+Tests currently cover:
+
+* prediction service
+* prediction range
+* ML Worker
+* Round Robin request distribution
+
+The current test suite contains:
 
 ```text
-MLWorker
+4 tests
+4 passed
 ```
 
-Its prediction method delegates the actual ML inference to:
-
-```text
-services/prediction.py
-```
-
-### Testing
-
-A unit test verifies that the Worker:
-
-* produces a floating-point prediction
-* produces a prediction within the expected rating range
-
-Tests are executed with:
+Tests are executed using:
 
 ```bash
 python -m pytest
 ```
 
-### Key Research Question
+## Important Architectural Limitation
 
-Now that the system can represent an individual ML Worker,
-the next question is:
+At this stage, the three workers are logical worker objects inside the same Python process.
 
-> How should incoming requests be distributed efficiently
-> across multiple ML Workers?
+They are not yet independent processes or containers.
 
-This leads to the next stage:
+Therefore, the system is not yet a fully distributed deployment.
 
-**Load Balancing.**
+This is intentional.
 
-### GitHub Practice
+The project first implements and tests the distributed-system logic at the application level.
 
-Each meaningful architectural step is committed separately.
+Later, Docker will be used to run independent worker instances.
 
-Example:
+---
 
-```bash
-git add .
-git commit -m "Document ML worker architecture"
-git push
+# Current System
+
+The system currently follows:
+
+```text
+                    ┌── Worker 1
+                    │
+Client → FastAPI → Round Robin
+                    │
+                    ├── Worker 2
+                    │
+                    └── Worker 3
+                           ↓
+                    Prediction Service
+                           ↓
+                      ML Model
 ```
 
-This creates a clear development history and makes the evolution
-of the distributed system visible in the GitHub repository.
+## Current Components
+
+```text
+main.py
+services/
+└── prediction.py
+
+ml/
+├── train.py
+└── model.joblib
+
+workers/
+└── worker.py
+
+load_balancer/
+└── round_robin.py
+
+tests/
+├── test_prediction.py
+├── test_worker.py
+└── test_load_balancer.py
+
+data/
+└── ratings.csv
+```
+
+---
+
+# Research Direction
+
+The central research question of the project is:
+
+> How do different load-balancing strategies affect the scalability, performance, and resource efficiency of a distributed machine learning inference system?
+
+The initial comparison will be:
+
+```text
+Round Robin
+     VS
+Least Connections
+```
+
+The system will eventually be evaluated using:
+
+* Average latency
+* P50 latency
+* P95 latency
+* P99 latency
+* Throughput
+* CPU utilization
+* Memory utilization
+* Error rate
+* Worker health
+* Recovery time
+
+---
+
+# Next Steps
+
+## Day 6+
+
+The next stage will introduce:
+
+```text
+Health Checks
+Fault Detection
+Worker Failure
+Fault Tolerance
+```
+
+The goal is to intentionally make a worker unavailable and investigate whether the system can continue serving requests.
+
+Later stages will include:
+
+```text
+Least Connections
+        ↓
+Docker
+        ↓
+Multiple Real Worker Containers
+        ↓
+Load Testing with Locust
+        ↓
+Performance Benchmarking
+        ↓
+Prometheus + Grafana
+        ↓
+Fault-Tolerance Experiments
+        ↓
+Final Research Analysis
+```
+
+---
+
+# GitHub Development Practice
+
+Each meaningful development stage is committed separately.
+
+The project uses descriptive commit messages such as:
+
+```bash
+git commit -m "Add ML worker abstraction"
+git commit -m "Integrate round robin load balancing"
+```
+
+The purpose is to maintain a clear development history and make the architectural evolution of the project visible.
+
+---
+
+# Main Learning Goal
+
+The ultimate goal is to understand not only how to build an ML model or an API, but how to turn an ML model into a reliable and measurable distributed inference system.
+
+The project connects concepts from:
+
+```text
+Machine Learning
+        +
+Backend Development
+        +
+Distributed Systems
+        +
+Cloud Infrastructure
+        +
+Performance Engineering
+        +
+Fault Tolerance
+        +
+Observability
+```
+
+This combination forms the technical foundation for the research and experiments in the later stages of the project.

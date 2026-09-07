@@ -10,8 +10,12 @@ class RoundRobinLoadBalancer:
         self.workers=workers
         self.current_index=0
     def get_next_worker(self):
-        worker=self.workers[self.current_index]
 
-        self.current_index=(self.current_index + 1 )% len(self.workers)
+        for _ in range(len(self.workers)):
+            worker=self.workers[self.current_index]
 
-        return  worker
+            self.current_index=(self.current_index +1)%len(self.workers)
+            if worker.health_check():
+                return  worker
+
+        raise  RuntimeError('No healthy workers available')
