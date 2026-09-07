@@ -771,3 +771,447 @@ Observability
 ```
 
 This combination forms the technical foundation for the research and experiments in the later stages of the project.
+# Day 6 — Health Checks & Fault Tolerance
+
+## 1. What did I learn today?
+
+Today I learned how a distributed inference system can detect unavailable workers and avoid sending requests to them.
+
+The main idea was:
+
+> A Load Balancer should not treat every worker as available. It should consider the current health of each worker before routing a request.
+
+---
+
+## 2. What is a Health Check?
+
+A **Health Check** is a mechanism used to determine whether a service or worker is available and able to process requests.
+
+In our project, each `MLWorker` has a health state:
+
+```text
+Worker
+├── worker_id
+└── is_healthy
+```
+
+We added:
+
+```python
+def health_check(self) -> bool:
+    return self.is_healthy
+```
+
+This allows the Load Balancer to ask:
+
+```text
+Is this worker healthy?
+        ↓
+      True / False
+```
+
+---
+
+## 3. Why do we need Health Checks?
+
+Without health checks, our Load Balancer assumes that every worker is always available.
+
+For example:
+
+```text
+Worker 1 → healthy
+Worker 2 → crashed
+Worker 3 → healthy
+```
+
+A normal Round Robin algorithm could still select Worker 2:
+
+```text
+Worker 1
+Worker 2 ❌
+Worker 3
+Worker 1
+Worker 2 ❌
+...
+```
+
+This would cause requests to fail.
+
+With health-aware load balancing:
+
+```text
+Worker 1 → healthy
+Worker 2 → unhealthy
+Worker 3 → healthy
+```
+
+the Load Balancer skips Worker 2:
+
+```text
+Worker 1
+Worker 3
+Worker 1
+Worker 3
+...
+```
+
+---
+
+## 4. Liveness vs Readiness
+
+Two common concepts in distributed systems are:
+
+### Liveness
+
+Answers:
+
+> Is the worker still alive?
+
+A liveness check is mainly concerned with whether the process is running.
+
+### Readiness
+
+Answers:
+
+> Is the worker ready to receive and process requests?
+
+A worker could be alive but temporarily not ready.
+
+For example:
+
+```text
+Worker process → running
+Model loading → not finished
+```
+
+The process is alive, but it should not receive inference requests yet.
+
+For this project, we currently use a simplified health state. Later, Docker/Kubernetes can provide more realistic health and readiness mechanisms.
+
+---
+
+## 5. Changing Worker Health
+
+We added methods to control the Worker state:
+
+```python
+def mark_unhealthy(self):
+    self.is_healthy = False
+
+
+def mark_healthy(self):
+    self.is_healthy = True
+```
+
+The important design principle is that:
+
+```text
+mark_unhealthy()
+        ↓
+changes state
+
+health_check()
+        ↓
+checks state
+```
+
+These methods have different responsibilities.
+
+We should not use:
+
+```python
+worker.mark_healthy()
+```
+
+as a way to check whether a worker is healthy.
+
+Instead:
+
+```python
+worker.health_check()
+```
+
+should be used for checking the state.
+
+---
+
+## 6. Health-aware Round Robin
+
+The original Round Robin algorithm simply selected the next worker:
+
+```text
+1 → 2 → 3 → 1 → 2 → 3
+```
+
+We changed it so that it checks worker health.
+
+Conceptually:
+
+```text
+Select next worker
+       ↓
+Is it healthy?
+   ↙        ↘
+ Yes         No
+ ↓           ↓
+Return      Skip
+worker      worker
+```
+
+The implementation checks at most `len(workers)` workers.
+
+This is important because the Load Balancer must not search forever if every worker is unavailable.
+
+---
+
+## 7. What happens when all workers are unhealthy?
+
+Consider:
+
+```text
+Worker 1 ❌
+Worker 2 ❌
+Worker 3 ❌
+```
+
+There is no valid destination for the request.
+
+Therefore the Load Balancer raises:
+
+```python
+RuntimeError("No healthy workers available")
+```
+
+This is better than an infinite loop.
+
+The system explicitly reports:
+
+> There is currently no available worker to handle the request.
+
+---
+
+## 8. Testing Exceptions with pytest
+
+Today I also learned a better way to test expected exceptions.
+
+Instead of manually writing:
+
+```python
+try:
+    ...
+except RuntimeError:
+    ...
+```
+
+we can use:
+
+```python
+with pytest.raises(
+    RuntimeError,
+    match="No healthy workers available"
+):
+    load_balancer.get_next_worker()
+```
+
+This tells pytest:
+
+1. A `RuntimeError` must occur.
+2. Its message must contain the expected text.
+
+If no exception occurs, the test fails.
+
+If a different exception occurs, the test fails.
+
+If the expected exception occurs with the expected message, the test passes.
+
+---
+
+## 9. Recovery
+
+A distributed system should not only detect failure.
+
+It should also be able to handle recovery.
+
+Example:
+
+```text
+Before:
+
+Worker 1 ✅
+Worker 2 ❌
+Worker 3 ✅
+```
+
+The Load Balancer uses:
+
+```text
+Worker 1 → Worker 3 → Worker 1 → Worker 3
+```
+
+After Worker 2 recovers:
+
+```text
+Worker 1 ✅
+Worker 2 ✅
+Worker 3 ✅
+```
+
+Worker 2 becomes available again.
+
+This introduces an important distributed-systems concept:
+
+> A worker can transition between healthy and unhealthy states during the lifetime of the system.
+
+---
+
+## 10. Important Design Lesson
+
+Today I learned that the Load Balancer and Worker have different responsibilities.
+
+### Worker
+
+Responsible for:
+
+```text
+Prediction
+Health state
+Health checking
+Health state transitions
+```
+
+### Load Balancer
+
+Responsible for:
+
+```text
+Selecting a worker
+Skipping unhealthy workers
+Reporting when no healthy worker exists
+```
+
+This is another example of **Separation of Concerns**.
+
+---
+
+## 11. Tests Added
+
+Day 6 added tests for:
+
+* Worker being healthy by default
+* Skipping unhealthy workers
+* Handling the case where all workers are unhealthy
+* Worker recovery
+* Correct Round Robin behavior with healthy workers
+
+Current test suite:
+
+```text
+8 passed
+```
+
+---
+
+## 12. Current Architecture
+
+After Day 6:
+
+```text
+                    Client
+                      │
+                      ▼
+                 FastAPI API
+                      │
+                      ▼
+             Round Robin LB
+                      │
+          ┌───────────┼───────────┐
+          ▼           ▼           ▼
+      Worker 1    Worker 2    Worker 3
+       HEALTHY    HEALTHY     HEALTHY
+          │           │           │
+          └───────────┼───────────┘
+                      ▼
+               Prediction Service
+                      │
+                      ▼
+                ML Model
+```
+
+The Load Balancer now considers Worker health before routing requests.
+
+---
+
+## 13. Important Limitation
+
+The workers are **not yet truly distributed**.
+
+Currently:
+
+```text
+One Python process
+ ├── Worker 1 object
+ ├── Worker 2 object
+ └── Worker 3 object
+```
+
+So when we say a worker is "unhealthy", we are currently simulating failure using:
+
+```python
+worker.mark_unhealthy()
+```
+
+This is intentional.
+
+The next phase will make the architecture more realistic by running workers as separate Docker containers:
+
+```text
+FastAPI container
+       │
+       ▼
+Load Balancer
+   │    │    │
+   ▼    ▼    ▼
+ W1    W2    W3
+```
+
+Then we can actually stop one container and observe how the system behaves.
+
+---
+
+## 14. Key Concepts Learned
+
+```text
+Health Check
+Liveness
+Readiness
+Fault Tolerance
+Failure Detection
+Worker Availability
+Recovery
+Exception Handling
+pytest.raises
+Separation of Concerns
+Health-aware Load Balancing
+```
+
+---
+
+## 15. Research Connection
+
+Day 6 directly supports the research question:
+
+> How do different load-balancing strategies affect the scalability, performance, and resource efficiency of a distributed machine learning inference system?
+
+Health-aware routing is important because a load-balancing strategy cannot be evaluated only under normal conditions.
+
+Later experiments should also consider:
+
+```text
+Normal operation
+       +
+Worker failure
+       +
+Worker recovery
+```
+
+This will allow us to measure not only performance but also **fault tolerance and recovery behavior**.

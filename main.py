@@ -2,7 +2,6 @@ from pydantic import BaseModel
 from fastapi import FastAPI
 
 from load_balancer.round_robin import RoundRobinLoadBalancer
-from services.prediction import predict_rating
 from workers.worker import MLWorker
 
 app=FastAPI()
@@ -39,3 +38,13 @@ def predict(request: PredictionRequest):
 @app.get('/health')
 def health():
     return {'status':'ok'}
+
+if __name__=='__main__':
+    import  uvicorn
+
+    uvicorn.run(
+        'main:app',
+        host='0.0.0.0',
+        port=8000
+
+    )
