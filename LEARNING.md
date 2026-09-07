@@ -1215,3 +1215,700 @@ Worker recovery
 ```
 
 This will allow us to measure not only performance but also **fault tolerance and recovery behavior**.
+# Day 7 — Dockerizing the ML Inference API
+
+## Goal
+
+The goal of Day 7 was to package the existing ML inference API inside a Docker container.
+
+Before Day 7, the application was running directly on the local machine using the Python virtual environment.
+
+After Day 7, the same application can run inside a Docker container.
+
+The main objective was not only to make Docker work, but to understand **why containers are useful in a distributed ML system**.
+
+---
+
+## 1. What is Docker?
+
+Docker is a platform for packaging an application together with its dependencies into a **container**.
+
+A container provides an isolated environment in which the application can run consistently.
+
+Without Docker:
+
+```text
+My Mac
+ ├── Python
+ ├── Virtual Environment
+ ├── FastAPI
+ ├── scikit-learn
+ ├── pandas
+ └── joblib
+```
+
+With Docker:
+
+```text
+Docker Container
+ ├── Python
+ ├── Application
+ ├── Dependencies
+ └── Configuration
+```
+
+The important idea is:
+
+> The application and its environment can be packaged together.
+
+This becomes especially important when the application needs to run on multiple machines or multiple services.
+
+---
+
+# 2. Why Docker is useful for this project
+
+The final project is a distributed ML inference system.
+
+Eventually, we want multiple independent ML workers:
+
+```text
+                    API Gateway
+                         |
+                  Load Balancer
+                  /      |      \
+                 /       |       \
+                ↓        ↓        ↓
+             Worker 1 Worker 2 Worker 3
+```
+
+Each worker should eventually run independently.
+
+Docker allows each worker to have its own isolated environment:
+
+```text
+Docker Network
+
+┌──────────────┐
+│   Gateway    │
+└──────┬───────┘
+       │
+ ┌─────┼─────┐
+ ↓     ↓     ↓
+ W1    W2    W3
+ 📦    📦    📦
+```
+
+This will become the foundation for the distributed architecture.
+
+---
+
+# 3. Dockerfile
+
+A `Dockerfile` describes how Docker should build the application image.
+
+Current Dockerfile:
+
+```dockerfile
+FROM python:3.14-slim
+
+WORKDIR /app
+
+COPY requirements.txt .
+
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY . .
+
+CMD ["python", "main.py"]
+```
+
+Each instruction has a specific purpose.
+
+---
+
+## 3.1 FROM
+
+```dockerfile
+FROM python:3.14-slim
+```
+
+This defines the base image.
+
+It provides Python and the basic environment required to run the application.
+
+The `slim` version is a smaller Python image compared with the full Python image.
+
+---
+
+## 3.2 WORKDIR
+
+```dockerfile
+WORKDIR /app
+```
+
+This sets `/app` as the working directory inside the container.
+
+After this instruction, commands operate from:
+
+```text
+/app
+```
+
+---
+
+## 3.3 COPY requirements.txt
+
+```dockerfile
+COPY requirements.txt .
+```
+
+This copies the project's dependency list into the container.
+
+For example:
+
+```text
+requirements.txt
+       ↓
+Docker Container
+/app/requirements.txt
+```
+
+---
+
+## 3.4 Install dependencies
+
+```dockerfile
+RUN pip install --no-cache-dir -r requirements.txt
+```
+
+Docker installs the Python dependencies required by the project.
+
+This includes packages such as:
+
+* FastAPI
+* Uvicorn
+* Pydantic
+* pandas
+* scikit-learn
+* joblib
+* pytest
+
+The exact list depends on the current `requirements.txt`.
+
+---
+
+## 3.5 COPY application
+
+```dockerfile
+COPY . .
+```
+
+This copies the project files into `/app`.
+
+For example:
+
+```text
+Local project
+    ↓
+Docker container
+
+main.py
+workers/
+load_balancer/
+services/
+ml/
+data/
+requirements.txt
+```
+
+### Important debugging lesson
+
+Initially, the Dockerfile contained:
+
+```dockerfile
+COPY workers .
+```
+
+This was incorrect because it copied only the `workers` directory.
+
+As a result, files such as `main.py`, `services/`, `ml/`, and `load_balancer/` were not copied into the expected location.
+
+The correct instruction is:
+
+```dockerfile
+COPY . .
+```
+
+This was an important lesson about Docker build context and file copying.
+
+---
+
+# 4. CMD
+
+The Dockerfile contains:
+
+```dockerfile
+CMD ["python", "main.py"]
+```
+
+This tells Docker what command should run when the container starts.
+
+In this project:
+
+```text
+Container starts
+      ↓
+python main.py
+      ↓
+Uvicorn starts
+      ↓
+FastAPI application
+      ↓
+Port 8000
+```
+
+---
+
+# 5. Python entry point
+
+For Uvicorn to start when `main.py` is executed directly, the following code was added:
+
+```python
+if __name__ == "__main__":
+    import uvicorn
+
+    uvicorn.run(
+        "main:app",
+        host="0.0.0.0",
+        port=8000
+    )
+```
+
+This introduces an important Python concept.
+
+When Python executes:
+
+```bash
+python main.py
+```
+
+the special variable:
+
+```python
+__name__
+```
+
+is equal to:
+
+```python
+"__main__"
+```
+
+Therefore:
+
+```python
+if __name__ == "__main__":
+```
+
+becomes true.
+
+---
+
+## Debugging lesson
+
+There was initially a typo:
+
+```python
+if __name__ == "main.py":
+```
+
+This condition was never true when executing:
+
+```bash
+python main.py
+```
+
+Therefore Uvicorn never started.
+
+The Docker container started and immediately exited.
+
+The correct version is:
+
+```python
+if __name__ == "__main__":
+```
+
+This was an important debugging lesson because the container itself was working; the problem was the application's entry point.
+
+---
+
+# 6. Why host must be 0.0.0.0
+
+The Uvicorn configuration uses:
+
+```python
+host="0.0.0.0"
+```
+
+A container has its own network environment.
+
+If the server listens only on:
+
+```text
+127.0.0.1
+```
+
+it may only be reachable from inside the container.
+
+Using:
+
+```text
+0.0.0.0
+```
+
+means the application listens on all network interfaces available inside the container.
+
+This allows Docker to expose the application to the host machine.
+
+---
+
+# 7. Docker Image
+
+A Dockerfile is not the running application itself.
+
+Docker uses the Dockerfile to build an **image**.
+
+The image is a packaged version of the application environment.
+
+We built the image using:
+
+```bash
+docker build -t distributed-ml-api .
+```
+
+The components are:
+
+```text
+docker build
+    ↓
+Build an image
+
+-t distributed-ml-api
+    ↓
+Give the image a name
+
+.
+    ↓
+Use the current directory as build context
+```
+
+The result is an image named:
+
+```text
+distributed-ml-api
+```
+
+---
+
+# 8. Docker Container
+
+An image is a template.
+
+A container is a running instance of that image.
+
+Conceptually:
+
+```text
+Image
+  ↓
+Container
+```
+
+We ran the application using:
+
+```bash
+docker run --rm -p 8000:8000 distributed-ml-api
+```
+
+---
+
+# 9. Port Mapping
+
+The command contains:
+
+```bash
+-p 8000:8000
+```
+
+The format is:
+
+```text
+host_port:container_port
+```
+
+Therefore:
+
+```text
+Mac localhost:8000
+        ↓
+Container port 8000
+        ↓
+Uvicorn
+        ↓
+FastAPI
+```
+
+This allows us to access the containerized API using:
+
+```bash
+curl http://localhost:8000/health
+```
+
+---
+
+# 10. Verifying the Container
+
+The health endpoint returned:
+
+```json
+{
+    "status": "ok"
+}
+```
+
+This confirms that:
+
+1. Docker successfully started the container.
+2. Python successfully executed `main.py`.
+3. Uvicorn successfully started.
+4. FastAPI successfully initialized.
+5. Port 8000 was exposed correctly.
+6. The host machine could communicate with the container.
+
+Therefore the API was successfully containerized.
+
+---
+
+# 11. Docker vs Virtual Environment
+
+A Python virtual environment and Docker solve different problems.
+
+A virtual environment isolates Python packages:
+
+```text
+Python Environment
+ └── Project dependencies
+```
+
+Docker provides a more complete isolated environment:
+
+```text
+Docker Container
+ ├── OS-level environment
+ ├── Python
+ ├── Python packages
+ ├── Application
+ └── Configuration
+```
+
+For this project, the virtual environment is useful during local development.
+
+Docker becomes particularly useful when we start running multiple independent services.
+
+---
+
+# 12. Current Architecture
+
+After Day 7:
+
+```text
+                 Docker Container
+        ┌─────────────────────────────┐
+        │                             │
+Client ───────→ FastAPI               │
+        │         │                   │
+        │         ↓                   │
+        │   Round Robin LB            │
+        │      /   |   \              │
+        │     W1   W2   W3            │
+        │                             │
+        └─────────────────────────────┘
+```
+
+The important limitation is that Worker 1, Worker 2, and Worker 3 are still Python objects inside the same process.
+
+They are **not yet independent containers**.
+
+Therefore the system is not fully distributed yet.
+
+---
+
+# 13. Why Day 8 is important
+
+The next step is to separate the workers.
+
+Current:
+
+```text
+One Container
+│
+└── FastAPI process
+    ├── Worker 1
+    ├── Worker 2
+    └── Worker 3
+```
+
+Target:
+
+```text
+Docker Network
+
+        FastAPI
+           │
+      Load Balancer
+       /    |    \
+      ↓     ↓     ↓
+    W1      W2     W3
+   📦      📦     📦
+```
+
+Each worker will eventually become an independent service.
+
+This introduces new distributed-systems concepts:
+
+* Container networking
+* Service-to-service communication
+* Service discovery
+* Network latency
+* Failure isolation
+* Independent worker lifecycle
+* Distributed fault tolerance
+
+This is the point where the project starts moving from a local simulation toward a real distributed inference architecture.
+
+---
+
+# 14. Research Connection
+
+Docker is not the research question itself.
+
+It is infrastructure that allows us to conduct the experiments properly.
+
+Our research question is:
+
+> How do different load-balancing strategies affect the scalability, performance, and resource efficiency of a distributed machine learning inference system?
+
+To answer this experimentally, we need independent workers.
+
+Docker allows us to create controlled environments such as:
+
+```text
+2 Workers
+3 Workers
+5 Workers
+8 Workers
+```
+
+and then measure:
+
+* Average latency
+* P50 latency
+* P95 latency
+* P99 latency
+* Throughput
+* CPU utilization
+* Memory utilization
+* Error rate
+* Worker recovery time
+
+We can then compare different load-balancing strategies under different workloads.
+
+---
+
+# 15. Key Concepts Learned
+
+### Docker
+
+Containerization platform used to package applications and dependencies.
+
+### Docker Image
+
+A packaged template from which containers are created.
+
+### Docker Container
+
+A running instance of an image.
+
+### Dockerfile
+
+Instructions used to build a Docker image.
+
+### Port Mapping
+
+Connects a host port to a container port.
+
+```text
+-p 8000:8000
+```
+
+### Build Context
+
+The directory Docker can access during image construction.
+
+```bash
+docker build .
+```
+
+### Entry Point
+
+The code responsible for starting the application.
+
+### 0.0.0.0
+
+Allows the server to listen on all interfaces inside the container.
+
+---
+
+# 16. Day 7 Summary
+
+Today I learned how to:
+
+* Understand the purpose of Docker
+* Create a Dockerfile
+* Build a Docker image
+* Run a Docker container
+* Install Python dependencies inside a container
+* Expose a container port
+* Run FastAPI with Uvicorn inside Docker
+* Debug a container that immediately exited
+* Understand Python's `__main__` entry point
+* Understand the difference between an image and a container
+* Understand why Docker is important for distributed systems
+
+The most important architectural lesson was:
+
+> Docker is the bridge between the current single-process prototype and the future multi-container distributed system.
+
+---
+
+## Day 7 Status
+
+**Completed successfully. ✅**
+
+The FastAPI ML inference API can now run inside Docker and respond successfully to:
+
+```bash
+curl http://localhost:8000/health
+```
+
+Expected response:
+
+```json
+{
+    "status": "ok"
+}
+```
+
+The next milestone is:
+
+**Day 8 — Docker Compose and Independent ML Workers**
