@@ -1,0 +1,30 @@
+services:
+  api:
+    build: .
+    ports:
+      - "8000:8000"
+
+  worker1:
+    build: .
+    command: python -m workers.worker
+    environment:
+          WORKER_ID: worker-1
+    ports:
+      - "8001:8000"
+
+  worker2:
+    build: .
+    command: python -m workers.worker
+    environment:
+          WORKER_ID: worker-2
+    ports:
+      - "8002:8000"
+
+  worker3:
+    build: .
+    command: python -m workers.worker
+    environment:
+      WORKER_ID: worker-3
+    ports:
+      - "8003:8000"
+

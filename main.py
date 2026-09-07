@@ -1,6 +1,6 @@
 from pydantic import BaseModel
 from fastapi import FastAPI
-
+import requests
 from load_balancer.round_robin import RoundRobinLoadBalancer
 from workers.worker import MLWorker
 
@@ -10,28 +10,33 @@ class PredictionRequest(BaseModel):
     user_id:int
     movie_id:int
 
-
-workers=[
-    MLWorker('worker_1'),
-    MLWorker('worker_2'),
-    MLWorker('worker_3'),
+workers = [
+    "http://worker1:8000",
+    "http://worker2:8000",
+    "http://worker3:8000",
 ]
-load_balancer=RoundRobinLoadBalancer(workers)
+
+load_balancer = RoundRobinLoadBalancer(workers)
+
+
 
 @app.post("/predict")
 def predict(request: PredictionRequest):
-    worker=load_balancer.get_next_worker()
-
-    predicted_rating = worker.predict(
-        request.user_id,
-        request.movie_id
+    worker_url=load_balancer.get_next_worker()
+    response = requests.post(
+        f"{worker_url}/predict",
+        json={
+            "user_id": request.user_id,
+            "movie_id": request.movie_id,
+        },
     )
 
+    worker_result = response.json()
     return {
         "user_id": request.user_id,
         "movie_id": request.movie_id,
-        "predicted_rating": predicted_rating,
-        'worker_id':worker.worker_id,
+        "predicted_rating": worker_result['predicted_rating'],
+        'worker_id':worker_result['worker_id'],
     }
 
 

@@ -1912,3 +1912,159 @@ Expected response:
 The next milestone is:
 
 **Day 8 — Docker Compose and Independent ML Workers**
+# Day 8 — Docker Compose and Distributed Workers
+
+## What I built
+
+Today I changed the architecture from multiple worker objects inside the API process into independent worker services running in separate Docker containers.
+
+The architecture is now:
+
+```text
+Client
+   |
+   v
+FastAPI API
+   |
+   v
+Round Robin Load Balancer
+   |
+   +------> Worker 1
+   |
+   +------> Worker 2
+   |
+   +------> Worker 3
+                |
+                v
+             ML Model
+```
+
+## Docker Compose
+
+Docker Compose allows multiple services to run together and communicate through a shared Docker network.
+
+I created separate services for:
+
+* API
+* Worker 1
+* Worker 2
+* Worker 3
+
+Each worker runs independently in its own container.
+
+## Container Ports vs Host Ports
+
+All workers listen on port `8000` inside their containers.
+
+For local testing, I mapped them to different host ports:
+
+```text
+API      localhost:8000 -> container:8000
+Worker 1 localhost:8001 -> container:8000
+Worker 2 localhost:8002 -> container:8000
+Worker 3 localhost:8003 -> container:8000
+```
+
+This showed me that multiple containers can use the same internal port because they have separate network namespaces.
+
+## Docker Service Names
+
+The API communicates with workers using Docker service names.
+
+For example:
+
+```text
+http://worker1:8000
+```
+
+Instead of:
+
+```text
+http://localhost:8000
+```
+
+Inside a container, `localhost` refers to that same container. Docker Compose provides DNS-based service discovery, so `worker1` resolves to the Worker 1 container.
+
+## Worker Configuration
+
+Worker IDs are configured using environment variables:
+
+```text
+WORKER_ID=worker-1
+WORKER_ID=worker-2
+WORKER_ID=worker-3
+```
+
+This is better than hard-coding the worker ID because the same worker application can be reused by multiple containers with different configurations.
+
+## HTTP Communication
+
+The API no longer directly calls the worker Python object.
+
+Instead, the communication is:
+
+```text
+API
+ |
+ | HTTP POST /predict
+ v
+Worker
+ |
+ v
+ML Model
+```
+
+This makes the workers independent services and is an important step toward a real distributed system.
+
+## Round Robin Load Balancing
+
+The API maintains a list of worker service URLs:
+
+```text
+worker1
+worker2
+worker3
+```
+
+The Round Robin load balancer selects workers sequentially:
+
+```text
+Request 1 -> Worker 1
+Request 2 -> Worker 2
+Request 3 -> Worker 3
+Request 4 -> Worker 1
+Request 5 -> Worker 2
+Request 6 -> Worker 3
+```
+
+I tested multiple prediction requests and verified that requests were distributed across the three workers.
+
+## What I learned
+
+* Docker Compose can run multiple independent services.
+* Containers communicate through a Docker network.
+* Docker service names can be used for service-to-service communication.
+* `localhost` inside a container refers to that container itself.
+* Host ports and container ports are different concepts.
+* Environment variables can be used to configure containers.
+* HTTP communication makes the ML workers independent from the API process.
+* Round Robin can distribute requests across independent worker services.
+
+## Research Connection
+
+This architecture creates the foundation for the main research question:
+
+> How do different load-balancing strategies affect the scalability, performance, and resource efficiency of a distributed machine learning inference system?
+
+With multiple independent workers, I can now experimentally study how requests are distributed and later compare different load-balancing strategies under increasing workloads.
+
+## Day 8 Status
+
+* [x] Docker Compose
+* [x] Independent Worker service
+* [x] Three Worker containers
+* [x] API-to-Worker HTTP communication
+* [x] Docker service discovery
+* [x] Round Robin load balancing
+* [x] Verified request distribution
+* [x] Documented the architecture
