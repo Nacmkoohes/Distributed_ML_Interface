@@ -2650,4 +2650,175 @@ different workloads and failure conditions."
 ```
 
 That distinction is important because the final goal of this project is not only to build a distributed inference system, but also to **experimentally evaluate its scalability, performance, and resource efficiency**.
-se stop worker2
+# Day 10 — Benchmarking, Concurrency, and Scalability
+
+## Goal
+
+The goal of Day 10 was to measure the performance of the distributed ML inference system under different workloads and understand how concurrency affects latency and throughput.
+
+---
+
+## Sequential vs Concurrent Requests
+
+In the initial benchmark, requests were sent sequentially. This means the next request was sent only after the previous request had completed.
+
+In the concurrent benchmark, multiple requests could be in flight at the same time.
+
+Python's `ThreadPoolExecutor` was used to control the level of client-side concurrency.
+
+```python
+with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+    futures = [
+        executor.submit(send_request)
+        for _ in range(NUM_REQUESTS)
+    ]
+```
+
+`MAX_WORKERS` controls the maximum number of benchmark tasks running concurrently. It does not represent the number of ML worker containers.
+
+The system itself still contains three ML workers:
+
+```text
+API
+ |
+Round Robin Load Balancer
+ |
+ +-- Worker 1
+ +-- Worker 2
+ +-- Worker 3
+```
+
+---
+
+## Metrics
+
+The benchmark measures five main metrics.
+
+### Average Latency
+
+The average response time across all requests.
+
+### P50 Latency
+
+The median latency. Approximately 50% of requests complete within this latency.
+
+### P95 Latency
+
+Approximately 95% of requests complete within this latency. It helps measure tail latency.
+
+### P99 Latency
+
+Approximately 99% of requests complete within this latency. It highlights the slowest portion of requests.
+
+### Throughput
+
+The number of requests processed per second.
+
+---
+
+## Benchmark Configuration
+
+Each experiment used:
+
+* 1000 total requests
+* The same prediction payload
+* Three ML worker containers
+* Round Robin load balancing
+* Different levels of client-side concurrency
+
+The tested concurrency levels were:
+
+```text
+1
+5
+10
+20
+50
+```
+
+---
+
+## Results
+
+| Concurrency | Average (ms) | P50 (ms) | P95 (ms) | P99 (ms) | Throughput (req/s) |
+| ----------: | -----------: | -------: | -------: | -------: | -----------------: |
+|           1 |        11.56 |    11.34 |    13.89 |    17.02 |              85.75 |
+|           5 |        16.38 |    15.69 |    23.28 |    28.03 |             303.57 |
+|          10 |        32.22 |    31.40 |    45.82 |    53.80 |             308.61 |
+|          20 |        63.13 |    60.64 |    90.71 |   122.77 |             313.51 |
+|          50 |       148.14 |   143.09 |   219.59 |   247.28 |             327.12 |
+
+---
+
+## Observations
+
+Increasing concurrency from 1 to 5 significantly increased throughput:
+
+```text
+85.75 → 303.57 requests/second
+```
+
+However, increasing concurrency beyond 5 produced only small throughput improvements:
+
+```text
+303.57 → 308.61 → 313.51 → 327.12 requests/second
+```
+
+At the same time, latency increased substantially.
+
+Average latency increased from:
+
+```text
+11.56 ms → 148.14 ms
+```
+
+when concurrency increased from 1 to 50.
+
+P99 latency increased from:
+
+```text
+17.02 ms → 247.28 ms
+```
+
+This indicates that the system is approaching a saturation point. Additional concurrency increases the number of requests competing for system resources, resulting in higher waiting time and tail latency while providing relatively little additional throughput.
+
+---
+
+## Key Learning
+
+Concurrency can improve throughput because multiple requests can be processed in flight at the same time.
+
+However, increasing concurrency indefinitely does not result in proportional performance improvements.
+
+Once the system approaches its capacity, additional concurrency primarily increases latency and queueing rather than useful throughput.
+
+This demonstrates an important scalability trade-off:
+
+```text
+Higher concurrency
+        ↓
+Higher throughput
+        ↓
+Eventually reaches saturation
+        ↓
+Latency increases sharply
+        ↓
+Throughput improvement becomes small
+```
+
+---
+
+## Research Relevance
+
+This experiment establishes the baseline scalability behavior of the current Round Robin system.
+
+The next experiments will compare this behavior with other load-balancing strategies, particularly Least Connections, under equivalent workloads.
+
+The comparison will focus on:
+
+* Latency
+* P50/P95/P99
+* Throughput
+* Resource utilization
+* Behavior under increasing concurrency
+* Worker failure and recovery
