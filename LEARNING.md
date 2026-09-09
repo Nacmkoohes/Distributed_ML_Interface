@@ -2068,3 +2068,586 @@ With multiple independent workers, I can now experimentally study how requests a
 * [x] Round Robin load balancing
 * [x] Verified request distribution
 * [x] Documented the architecture
+# Day 9 — Health-Aware Load Balancing & Worker Recovery
+
+Today, I improved the distributed inference system by making the load balancer **health-aware**.
+
+Previously, the Round Robin load balancer assumed that every worker was always available. This is not realistic in a distributed system because individual workers can fail, restart, become temporarily unavailable, or lose network connectivity.
+
+The goal of Day 9 was to make the system able to:
+
+1. Check whether workers are healthy.
+2. Avoid sending requests to unhealthy workers.
+3. Continue serving requests when one worker fails.
+4. Allow recovered workers to automatically rejoin the load-balancing rotation.
+
+---
+
+## 1. The Problem with Basic Round Robin
+
+The original Round Robin algorithm simply selected workers in sequence:
+
+```text
+Worker 1 → Worker 2 → Worker 3 → Worker 1 → Worker 2 → Worker 3
+```
+
+This works when all workers are available.
+
+However, imagine that Worker 2 crashes:
+
+```text
+Worker 1 ✓
+Worker 2 ✗
+Worker 3 ✓
+```
+
+A basic Round Robin implementation would still try:
+
+```text
+Worker 1 → Worker 2 → Worker 3
+             ↑
+          FAILURE
+```
+
+This means the API could send a request to a worker that cannot process it.
+
+Therefore, the load balancer needs some way to determine whether a worker is currently available.
+
+---
+
+# 2. Health Checks
+
+Each worker already exposes a `/health` endpoint:
+
+```http
+GET /health
+```
+
+A healthy worker returns:
+
+```json
+{
+    "status": "ok",
+    "worker_id": "worker-1"
+}
+```
+
+The health endpoint provides a simple way for other services to check whether a worker is alive and responding.
+
+The important idea is:
+
+```text
+Load Balancer
+      │
+      ├── GET /health → Worker 1
+      │
+      ├── GET /health → Worker 2
+      │
+      └── GET /health → Worker 3
+```
+
+The load balancer can use these responses before assigning an inference request.
+
+---
+
+# 3. Updating the Load Balancer
+
+The Round Robin load balancer was changed so that it checks worker health before returning a worker.
+
+The implementation uses the `requests` library:
+
+```python
+import requests
+
+
+class RoundRobinLoadBalancer:
+    """
+    Distributes requests across healthy worker services
+    using round-robin scheduling.
+    """
+
+    def __init__(self, workers):
+        self.workers = workers
+        self.current_index = 0
+
+    def is_healthy(self, worker_url):
+        try:
+            response = requests.get(
+                f"{worker_url}/health",
+                timeout=1,
+            )
+
+            return response.status_code == 200
+
+        except requests.RequestException:
+            return False
+
+    def get_next_worker(self):
+        for _ in range(len(self.workers)):
+
+            worker = self.workers[self.current_index]
+
+            self.current_index = (
+                self.current_index + 1
+            ) % len(self.workers)
+
+            if self.is_healthy(worker):
+                return worker
+
+        raise RuntimeError("No healthy workers available")
+```
+
+---
+
+# 4. How `is_healthy()` Works
+
+The `is_healthy()` method sends an HTTP request to the worker's health endpoint:
+
+```python
+response = requests.get(
+    f"{worker_url}/health",
+    timeout=1,
+)
+```
+
+If the worker responds with HTTP status code `200`, the worker is considered healthy:
+
+```python
+return response.status_code == 200
+```
+
+If the request fails, for example because the worker is down or unreachable, `requests` raises a `RequestException`.
+
+The exception is handled:
+
+```python
+except requests.RequestException:
+    return False
+```
+
+Therefore, an unavailable worker is treated as unhealthy instead of crashing the load balancer.
+
+---
+
+# 5. Health-Aware Round Robin
+
+The load balancer still follows the Round Robin strategy, but it now skips unhealthy workers.
+
+For example:
+
+```text
+Worker 1 ✓
+Worker 2 ✓
+Worker 3 ✓
+```
+
+Requests are distributed as:
+
+```text
+Request 1 → Worker 1
+Request 2 → Worker 2
+Request 3 → Worker 3
+Request 4 → Worker 1
+Request 5 → Worker 2
+Request 6 → Worker 3
+```
+
+But if Worker 2 becomes unavailable:
+
+```text
+Worker 1 ✓
+Worker 2 ✗
+Worker 3 ✓
+```
+
+The load balancer checks each candidate and skips Worker 2.
+
+The effective behavior becomes:
+
+```text
+Request 1 → Worker 1
+Request 2 → Worker 3
+Request 3 → Worker 1
+Request 4 → Worker 3
+```
+
+This allows the system to continue operating despite the failure of an individual worker.
+
+---
+
+# 6. Avoiding Infinite Loops
+
+An important implementation detail is the loop inside `get_next_worker()`:
+
+```python
+for _ in range(len(self.workers)):
+```
+
+The load balancer checks at most one complete cycle through the worker list.
+
+This prevents the system from continuously checking workers forever if every worker is unhealthy.
+
+If no healthy worker is found, the load balancer raises:
+
+```python
+raise RuntimeError("No healthy workers available")
+```
+
+This gives the API a clear failure state instead of hanging indefinitely.
+
+---
+
+# 7. Testing Worker Failure
+
+To test fault tolerance, I intentionally stopped Worker 2.
+
+The worker was stopped using Docker Compose:
+
+```bash
+docker compose stop worker2
+```
+
+The system then looked like:
+
+```text
+API
+ │
+ ▼
+Load Balancer
+ ├── Worker 1 ✓
+ ├── Worker 2 ✗
+ └── Worker 3 ✓
+```
+
+Prediction requests were sent to the API:
+
+```bash
+curl -X POST http://localhost:8000/predict \
+-H "Content-Type: application/json" \
+-d '{"user_id":1,"movie_id":10}'
+```
+
+The important behavior was that Worker 2 was skipped.
+
+The API continued processing requests through the remaining healthy workers.
+
+---
+
+# 8. Fault Tolerance
+
+This demonstrated a basic form of **fault tolerance**.
+
+The system does not require every worker to be available in order to continue serving requests.
+
+Instead:
+
+```text
+Worker failure
+      ↓
+Health check fails
+      ↓
+Worker marked unavailable
+      ↓
+Load balancer skips worker
+      ↓
+Healthy workers continue serving requests
+```
+
+This is an important property of distributed systems.
+
+A failure in one component should not necessarily cause the entire system to fail.
+
+---
+
+# 9. Recovering a Failed Worker
+
+Next, Worker 2 was restarted:
+
+```bash
+docker compose start worker2
+```
+
+After restarting it, the worker's health endpoint was checked:
+
+```bash
+curl http://localhost:8002/health
+```
+
+The expected response was:
+
+```json
+{
+    "status": "ok",
+    "worker_id": "worker-2"
+}
+```
+
+This confirmed that Worker 2 was available again.
+
+---
+
+# 10. Worker Rejoining the Rotation
+
+After recovery, prediction requests were sent to the API again.
+
+Worker 2 became available and was once again included in the Round Robin rotation.
+
+The system therefore transitioned from:
+
+```text
+Worker 1 ✓
+Worker 2 ✗
+Worker 3 ✓
+```
+
+back to:
+
+```text
+Worker 1 ✓
+Worker 2 ✓
+Worker 3 ✓
+```
+
+This means the load balancer does not permanently remove failed workers.
+
+Instead, worker availability is checked dynamically.
+
+A worker that becomes healthy again can automatically participate in request distribution.
+
+---
+
+# 11. Failure and Recovery Flow
+
+The complete behavior can be summarized as:
+
+```text
+                ┌── Worker 1 ✓
+                │
+Client → API → Load Balancer ── Worker 2 ✓
+                │
+                └── Worker 3 ✓
+```
+
+When Worker 2 fails:
+
+```text
+                ┌── Worker 1 ✓
+                │
+Client → API → Load Balancer ── Worker 2 ✗
+                │                     ↑
+                └── Worker 3 ✓       skipped
+```
+
+After Worker 2 recovers:
+
+```text
+                ┌── Worker 1 ✓
+                │
+Client → API → Load Balancer ── Worker 2 ✓
+                │                     ↑
+                └── Worker 3 ✓       rejoins
+```
+
+---
+
+# 12. Architecture After Day 9
+
+The architecture now looks like:
+
+```text
+                         ┌───────────────┐
+                         │   Worker 1    │
+                         │   /health     │
+                         │   /predict    │
+                         └───────▲───────┘
+                                 │
+                                 │
+┌──────────┐     ┌───────────────┴──────────────┐
+│  Client  │────▶│          FastAPI API         │
+└──────────┘     │                               │
+                 │       Round Robin LB          │
+                 │       + Health Checks         │
+                 └───────────────┬───────────────┘
+                                 │
+                         ┌───────┴───────┐
+                         │               │
+                  ┌─────▼─────┐   ┌────▼──────┐
+                  │  Worker 2  │   │  Worker 3 │
+                  │  /health   │   │  /health  │
+                  │  /predict  │   │  /predict │
+                  └────────────┘   └───────────┘
+```
+
+The important difference from the previous architecture is that the Load Balancer is now aware of worker health.
+
+---
+
+# 13. Key Distributed Systems Concepts
+
+## Health Check
+
+A health check is a mechanism for determining whether a service is currently available and responding.
+
+In this project:
+
+```http
+GET /health
+```
+
+is used as a basic health check.
+
+---
+
+## Fault Tolerance
+
+Fault tolerance means that a system can continue operating when some of its components fail.
+
+In this project:
+
+```text
+Worker 2 fails
+      ↓
+Worker 1 + Worker 3 continue serving requests
+```
+
+The entire inference service does not immediately fail.
+
+---
+
+## Failure Detection
+
+The load balancer detects failure by attempting to communicate with the worker.
+
+A timeout or failed HTTP request is interpreted as an unhealthy worker.
+
+---
+
+## Recovery
+
+Recovery occurs when a failed worker becomes available again.
+
+In this project:
+
+```text
+Worker stopped
+     ↓
+Worker unavailable
+     ↓
+Load Balancer skips it
+     ↓
+Worker restarted
+     ↓
+Health check succeeds
+     ↓
+Worker rejoins rotation
+```
+
+---
+
+## Service Discovery
+
+Docker Compose provides service names such as:
+
+```text
+worker1
+worker2
+worker3
+```
+
+The API can communicate with these services using their Docker network names:
+
+```text
+http://worker1:8000
+http://worker2:8000
+http://worker3:8000
+```
+
+This means the API does not need to know the workers' container IP addresses.
+
+---
+
+# 14. Important Design Decision
+
+The load balancer does not permanently maintain a list of "good" and "bad" workers.
+
+Instead, it checks worker health when selecting a worker.
+
+This is useful because worker state can change:
+
+```text
+healthy → failed → healthy
+```
+
+A dynamic health check allows the load balancer to adapt to these changes.
+
+---
+
+# 15. What I Learned Today
+
+Today I learned how to move from a simple load-balancing implementation toward a more realistic distributed system.
+
+The main concepts were:
+
+* Health checks
+* HTTP service-to-service communication
+* Failure detection
+* Fault tolerance
+* Worker failure
+* Worker recovery
+* Health-aware load balancing
+* Round Robin with unavailable workers
+* Docker Compose service discovery
+* Dynamic worker availability
+
+The most important idea is:
+
+> A distributed system should expect failures rather than assume that every component is always available.
+
+---
+
+# 16. Current System Behavior
+
+After Day 9, the system can:
+
+* Run multiple independent ML worker containers.
+* Distribute inference requests using Round Robin.
+* Check worker health before sending requests.
+* Detect unavailable workers.
+* Skip failed workers.
+* Continue serving requests through healthy workers.
+* Restart failed workers.
+* Allow recovered workers to rejoin the rotation.
+
+The system is therefore moving from a simple multi-container application toward a **fault-tolerant distributed ML inference platform**.
+
+---
+
+# 17. Next Step
+
+The next stage is to make failure behavior measurable rather than only observable.
+
+Future experiments will measure:
+
+* Request latency
+* P50 / P95 / P99 latency
+* Throughput
+* Error rate
+* Worker recovery time
+* Behavior under increasing workload
+* Resource utilization
+
+This will allow the project to move from:
+
+```text
+"It works."
+```
+
+to:
+
+```text
+"We measured how the system behaves under
+different workloads and failure conditions."
+```
+
+That distinction is important because the final goal of this project is not only to build a distributed inference system, but also to **experimentally evaluate its scalability, performance, and resource efficiency**.
+se stop worker2
