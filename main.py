@@ -2,7 +2,9 @@ from pydantic import BaseModel
 from fastapi import FastAPI
 import requests
 from load_balancer.round_robin import RoundRobinLoadBalancer
+from load_balancer.least_connections import LeastConnectionsLoadBalancer
 from workers.worker import MLWorker
+import  os
 
 app=FastAPI()
 
@@ -16,29 +18,40 @@ workers = [
     "http://worker3:8000",
 ]
 
-load_balancer = RoundRobinLoadBalancer(workers)
+strategy = os.getenv("LOAD_BALANCER", "round_robin")
 
-
+if strategy == "least_connections":
+    load_balancer = LeastConnectionsLoadBalancer(workers)
+else:
+    load_balancer = RoundRobinLoadBalancer(workers)
 
 @app.post("/predict")
 def predict(request: PredictionRequest):
-    worker_url=load_balancer.get_next_worker()
-    response = requests.post(
-        f"{worker_url}/predict",
-        json={
+    worker_url = load_balancer.get_next_worker()
+    if strategy == "least_connections":
+        load_balancer.start_request(worker_url)
+
+    try:
+        response = requests.post(
+            f"{worker_url}/predict",
+            json={
+                "user_id": request.user_id,
+                "movie_id": request.movie_id,
+            },
+        )
+
+        worker_result = response.json()
+
+        return {
             "user_id": request.user_id,
             "movie_id": request.movie_id,
-        },
-    )
+            "predicted_rating": worker_result["predicted_rating"],
+            "worker_id": worker_result["worker_id"],
+        }
 
-    worker_result = response.json()
-    return {
-        "user_id": request.user_id,
-        "movie_id": request.movie_id,
-        "predicted_rating": worker_result['predicted_rating'],
-        'worker_id':worker_result['worker_id'],
-    }
-
+    finally:
+        if strategy == "least_connections":
+            load_balancer.finish_request(worker_url)
 
 @app.get('/health')
 def health():

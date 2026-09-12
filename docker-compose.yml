@@ -3,6 +3,8 @@ services:
     build: .
     ports:
       - "8000:8000"
+    environment:
+      LOAD_BALANCER: least_connections
 
   worker1:
     build: .
