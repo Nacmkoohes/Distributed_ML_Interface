@@ -1,8 +1,9 @@
 import  time
-import  sys
+import  sys,os
 import  requests
 import statistics
 from concurrent.futures import ThreadPoolExecutor
+import csv
 
 URL='http://localhost:8000/predict'
 
@@ -66,7 +67,39 @@ p50=statistics.median(latencies)
 p95=statistics.quantiles(latencies,n=100)[94]
 p99=statistics.quantiles(latencies,n=100)[98]
 throughput=NUM_REQUESTS/total_time
+strategy = sys.argv[2]
+results_file = "benchmark/results.csv"
+file_exists = os.path.exists(results_file)
 
+with open(
+    results_file,
+    "a",
+    newline="",
+) as file:
+    writer = csv.writer(file)
+
+    if not file_exists:
+        writer.writerow([
+            "strategy",
+            "concurrency",
+            "average_latency_ms",
+            "p50_ms",
+            "p95_ms",
+            "p99_ms",
+            "throughput_req_per_sec",
+            "error_rate",
+        ])
+
+    writer.writerow([
+        strategy,
+        MAX_WORKERS,
+        average,
+        p50,
+        p95,
+        p99,
+        throughput,
+        error_rate,
+    ])
 
 print(f"\nAverage latency: {average:.2f} ms")
 print(f"P50 latency: {p50:.2f} ms")
