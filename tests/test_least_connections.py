@@ -140,3 +140,5 @@ def test_worker_is_used_again_after_recovery():
 
         # Worker 1 has the fewest connections, so it should be selected.
         assert load_balancer.get_next_worker() == WORKERS[0]
+
+
