@@ -1,142 +1,118 @@
 # Distributed ML Interface
 
-A distributed machine learning inference platform built with **FastAPI, Docker, multiple ML workers, and load-balancing strategies**.
+A distributed machine-learning inference platform designed to study **load balancing, scalability, fault tolerance, and performance** in a multi-worker inference system.
 
-The project investigates how different load-balancing strategies affect the **performance, scalability, and fault tolerance** of a distributed machine learning inference system.
+The project compares **Round Robin** and **Least Connections** load-balancing strategies under increasing workloads and evaluates their impact on latency, throughput, and tail performance.
 
 ---
 
 ## Research Question
 
-> How do different load-balancing strategies affect the scalability, performance, and resource efficiency of a distributed machine learning inference system?
+> **How do different load-balancing strategies affect the scalability, performance, and resource efficiency of a distributed machine-learning inference system?**
 
-The project currently compares:
-
-* **Round Robin**
-* **Least Connections**
-
-under increasing concurrent workloads.
-
-The system is also tested under worker failures to evaluate its fault-tolerance and failover behavior.
+The system was designed as an experimental platform rather than a production-ready cloud service. The primary focus is on distributed-systems behavior and performance analysis, while the machine-learning model provides a realistic inference workload.
 
 ---
 
 ## Project Goals
 
-The main goals of this project are:
+The project investigates:
 
-* Build a distributed ML inference system.
-* Deploy multiple independent ML workers.
-* Implement and compare different load-balancing strategies.
-* Measure latency and throughput under increasing workloads.
-* Analyze tail latency using P50, P95, and P99.
-* Measure request error rates.
-* Test worker failure and recovery.
-* Implement request retry/failover behavior.
-* Containerize the complete system using Docker Compose.
-* Produce reproducible benchmark results.
-* Analyze the trade-offs between different load-balancing strategies.
+* How requests should be distributed across multiple ML workers
+* How different load-balancing strategies behave under increasing concurrency
+* How worker failures affect request processing
+* How retry and failover improve system availability
+* How latency changes as workload increases
+* How average latency differs from tail latency
+* How P95 and P99 reveal slow requests
+* How to monitor a distributed inference service using Prometheus and Grafana
 
 ---
 
-## System Architecture
+## Architecture
 
 ```text
-                    Client
-                      |
-                      v
-              +---------------+
-              |   FastAPI API  |
-              |    Gateway     |
-              +-------+-------+
-                      |
-                      v
-              +---------------+
-              | Load Balancer  |
-              +-------+-------+
-                      |
-          +-----------+-----------+
-          |           |           |
-          v           v           v
-     +---------+ +---------+ +---------+
-     | Worker 1| | Worker 2| | Worker 3|
-     +----+----+ +----+----+ +----+----+
-          |           |           |
-          +-----------+-----------+
-                      |
-                      v
-               ML Prediction
-                      |
-                      v
-                JSON Response
+                         ┌───────────────┐
+                         │    Client     │
+                         └───────┬───────┘
+                                 │
+                                 ▼
+                       ┌──────────────────┐
+                       │    FastAPI API    │
+                       │   API Gateway     │
+                       └────────┬─────────┘
+                                │
+                                ▼
+                       ┌──────────────────┐
+                       │  Load Balancer   │
+                       │                  │
+                       │ Round Robin      │
+                       │ Least Connections│
+                       └────────┬─────────┘
+                                │
+                 ┌──────────────┼──────────────┐
+                 │              │              │
+                 ▼              ▼              ▼
+           ┌──────────┐   ┌──────────┐   ┌──────────┐
+           │ Worker 1 │   │ Worker 2 │   │ Worker 3 │
+           └────┬─────┘   └────┬─────┘   └────┬─────┘
+                │              │              │
+                └──────────────┼──────────────┘
+                               ▼
+                         ┌────────────┐
+                         │ ML Model   │
+                         └────────────┘
+
+
+                    Monitoring Pipeline
+
+             FastAPI
+                │
+             /metrics
+                │
+                ▼
+          ┌─────────────┐
+          │ Prometheus  │
+          └──────┬──────┘
+                 │
+                 │ PromQL
+                 ▼
+          ┌─────────────┐
+          │   Grafana   │
+          └─────────────┘
 ```
-
-Each worker runs as an independent container and loads the same machine learning model.
-
-The API gateway selects a worker using the configured load-balancing strategy.
 
 ---
 
-## Technologies
+## Technology Stack
 
-### Backend
-
-* Python
-* FastAPI
-* Pydantic
-* Requests
-* Uvicorn
-
-### Machine Learning
-
-* Scikit-learn
-* Pandas
-* Joblib
-
-### Distributed System
-
-* Multiple ML workers
-* Load balancing
-* Health checking
-* Retry/failover
-* Fault testing
-
-### Infrastructure
-
-* Docker
-* Docker Compose
-* Linux-based containers
-
-### Testing & Benchmarking
-
-* Pytest
-* Python `ThreadPoolExecutor`
-* Pandas
-* Matplotlib
-
-### Development
-
-* Git
-* GitHub
+| Category            | Technology                   |
+| ------------------- | ---------------------------- |
+| API                 | FastAPI                      |
+| Language            | Python                       |
+| ML                  | scikit-learn                 |
+| Data Processing     | Pandas                       |
+| Model Serialization | Joblib                       |
+| Load Balancing      | Custom Python implementation |
+| Testing             | Pytest                       |
+| Containerization    | Docker                       |
+| Orchestration       | Docker Compose               |
+| Monitoring          | Prometheus                   |
+| Visualization       | Grafana                      |
+| Benchmarking        | Custom Python benchmark      |
+| Version Control     | Git / GitHub                 |
 
 ---
 
-## Machine Learning Model
+# Machine Learning Component
 
-The ML component is intentionally lightweight because the primary focus of this project is the **distributed inference architecture**, rather than model complexity.
+The project uses a lightweight movie-rating prediction model based on MovieLens-style user/movie interactions.
 
-The current model predicts a movie rating using:
+The ML model is intentionally simple because the main research focus is **distributed inference and system performance**, rather than model accuracy.
 
-* `user_id`
-* `movie_id`
+The model is loaded once by each worker and reused for inference.
 
-The model is trained using a regression approach and stored as:
-
-```text
-ml/model.joblib
-```
-
-A prediction request has the following structure:
+The prediction service receives:
 
 ```json
 {
@@ -145,7 +121,7 @@ A prediction request has the following structure:
 }
 ```
 
-A worker returns a response similar to:
+and returns a predicted rating together with the worker that processed the request:
 
 ```json
 {
@@ -158,150 +134,187 @@ A worker returns a response similar to:
 
 ---
 
-## Project Structure
+# Distributed Worker Architecture
+
+The system runs three independent ML workers:
 
 ```text
-Distributed_ML_Interface/
-│
-├── benchmark/
-│   ├── baseline.py
-│   ├── results.csv
-│   └── plots/
-│       ├── average_latency_ms.png
-│       ├── p50_ms.png
-│       ├── p95_ms.png
-│       ├── p99_ms.png
-│       └── throughput_req_per_sec.png
-│
-├── load_balancer/
-│   ├── round_robin.py
-│   └── least_connections.py
-│
-├── ml/
-│   └── model.joblib
-│
-├── services/
-│   └── prediction.py
-│
-├── tests/
-│   ├── test_least_connections.py
-│   └── ...
-│
-├── workers/
-│   └── worker.py
-│
-├── Dockerfile
-├── docker-compose.yml
-├── main.py
-├── requirements.txt
-├── LEARNING.md
-└── README.md
+worker-1
+worker-2
+worker-3
 ```
 
----
+Each worker:
 
-# Load Balancing
+* Runs a FastAPI application
+* Loads the ML model
+* Provides a `/predict` endpoint
+* Provides a `/health` endpoint
+* Identifies itself using `WORKER_ID`
 
-## Round Robin
-
-Round Robin distributes requests sequentially among available workers.
-
-For example:
+Example:
 
 ```text
-Request 1 → Worker 1
-Request 2 → Worker 2
-Request 3 → Worker 3
-Request 4 → Worker 1
-Request 5 → Worker 2
-...
+POST /predict
 ```
 
-The implementation also performs a health check before selecting a worker.
-
----
-
-## Least Connections
-
-Least Connections tracks the number of active requests assigned to each worker.
-
-The worker with the fewest active connections is selected.
-
-For example:
-
-```text
-Worker 1 → 3 active requests
-Worker 2 → 1 active request
-Worker 3 → 2 active requests
-
-Next request → Worker 2
-```
-
-This strategy can be useful when workers have different workloads or when request processing times vary significantly.
-
----
-
-# Fault Tolerance
-
-The system was also tested under worker failures.
-
-The fault-tolerance workflow is:
-
-```text
-Normal Operation
-       |
-       v
-Worker Failure
-       |
-       v
-Health Check
-       |
-       v
-Select Healthy Worker
-       |
-       v
-Retry Request
-       |
-       v
-Successful Response
-```
-
-For example, when `worker1` was stopped:
-
-```bash
-docker compose stop worker1
-```
-
-the API continued serving requests through another healthy worker.
-
-A successful request returned:
+Response:
 
 ```json
 {
-  "user_id": 1,
-  "movie_id": 10,
   "predicted_rating": 4.34,
   "worker_id": "worker-2"
 }
 ```
 
-After restarting the failed worker:
+The worker ID makes request distribution observable during testing.
 
-```bash
-docker compose up -d worker1
+---
+
+# Load Balancing
+
+Two load-balancing strategies were implemented and evaluated.
+
+## Round Robin
+
+Round Robin distributes requests sequentially across workers.
+
+For three workers, the sequence is approximately:
+
+```text
+worker-1
+    ↓
+worker-2
+    ↓
+worker-3
+    ↓
+worker-1
+    ↓
+...
 ```
 
-the worker became available again.
+Before selecting a worker, the load balancer checks worker availability through the `/health` endpoint.
 
-This demonstrates basic **failover and recovery behavior**.
+### Advantages
 
-> The current health mechanism primarily verifies worker reachability. More advanced mechanisms such as circuit breakers, persistent worker state, and automatic health-state management are planned improvements.
+* Simple
+* Low scheduling overhead
+* Predictable distribution
+* Effective for homogeneous workers
+
+### Limitation
+
+Round Robin does not consider the current workload or number of active requests on each worker.
+
+---
+
+## Least Connections
+
+Least Connections selects the worker with the lowest number of active requests.
+
+For example:
+
+```text
+worker-1 → 3 connections
+worker-2 → 1 connection
+worker-3 → 4 connections
+```
+
+The next request is sent to:
+
+```text
+worker-2
+```
+
+The implementation maintains an in-memory connection counter and updates it when requests start and finish.
+
+### Advantages
+
+* Can adapt to uneven workloads
+* Useful when request durations vary
+* Can avoid sending work to already busy workers
+
+### Limitation
+
+The strategy introduces additional bookkeeping and health-check overhead.
+
+For homogeneous workers with similar request durations, it may provide little benefit over Round Robin.
+
+---
+
+# Strategy Selection
+
+The strategy can be selected through an environment variable:
+
+```text
+LOAD_BALANCER
+```
+
+For example:
+
+```yaml
+environment:
+  LOAD_BALANCER: least_connections
+```
+
+Supported strategies:
+
+```text
+round_robin
+least_connections
+```
+
+---
+
+# Fault Tolerance
+
+Worker failures were explicitly tested rather than assuming that the system would remain available.
+
+The fault-tolerance experiment followed this process:
+
+```text
+1. Start all workers
+        ↓
+2. Stop one worker
+        ↓
+3. Send inference request
+        ↓
+4. Detect worker failure
+        ↓
+5. Retry using another worker
+        ↓
+6. Successful response
+        ↓
+7. Restart failed worker
+        ↓
+8. Worker becomes available again
+```
+
+The API contains retry/failover logic around worker requests.
+
+When a worker becomes unavailable, the API can attempt another worker rather than immediately returning an error.
+
+### Important limitation
+
+The current retry mechanism is intentionally lightweight.
+
+It is **not a full production-grade circuit breaker**. In particular, a failed worker may temporarily remain visible to health checks depending on the exact failure timing.
+
+A production implementation could add:
+
+* Failure thresholds
+* Temporary worker quarantine
+* Circuit breaker states
+* Exponential backoff
+* More sophisticated health checks
+
+These are considered future improvements rather than part of the current experimental scope.
 
 ---
 
 # Benchmarking
 
-The system was benchmarked using increasing concurrency levels:
+The system was benchmarked under increasing concurrency:
 
 ```text
 1
@@ -311,9 +324,7 @@ The system was benchmarked using increasing concurrency levels:
 50
 ```
 
-Each configuration was executed multiple times.
-
-The benchmark measures:
+For each configuration, the following metrics were collected:
 
 * Average latency
 * P50 latency
@@ -322,198 +333,346 @@ The benchmark measures:
 * Throughput
 * Error rate
 
----
-
-## Benchmark Methodology
-
-The benchmark uses Python's `ThreadPoolExecutor` to generate concurrent HTTP requests.
-
-Each request sends:
-
-```json
-{
-  "user_id": 1,
-  "movie_id": 10
-}
-```
-
-to:
-
-```text
-POST /predict
-```
-
-For each workload configuration, the benchmark records the response latency and HTTP status code.
-
-The results are stored in:
-
-```text
-benchmark/results.csv
-```
+The same workload was used for both load-balancing strategies to make the comparison controlled.
 
 ---
 
 # Benchmark Results
 
-The distributed inference system was evaluated by comparing:
+## Round Robin
 
-* **Round Robin**
-* **Least Connections**
+| Concurrency | Avg Latency (ms) | P50 (ms) | P95 (ms) | P99 (ms) | Throughput (req/s) | Error Rate |
+| ----------: | ---------------: | -------: | -------: | -------: | -----------------: | ---------: |
+|           1 |            15.00 |    14.84 |    17.16 |    20.43 |              66.05 |         0% |
+|           5 |            24.83 |    24.35 |    30.95 |    34.98 |             199.43 |         0% |
+|          10 |            43.02 |    42.33 |    57.78 |    65.22 |             230.82 |         0% |
+|          20 |            79.69 |    78.56 |   110.38 |   125.11 |             248.57 |         0% |
+|          50 |           189.46 |   189.05 |   258.24 |   299.88 |             258.51 |         0% |
 
-under increasing concurrency.
+## Least Connections
 
-| Strategy          | Concurrency | Avg Latency (ms) | P95 (ms) | P99 (ms) | Throughput (req/s) | Error Rate |
-| ----------------- | ----------: | ---------------: | -------: | -------: | -----------------: | ---------: |
-| Round Robin       |           1 |            15.00 |    17.16 |    20.43 |              66.05 |         0% |
-| Round Robin       |           5 |            24.83 |    30.95 |    34.98 |             199.43 |         0% |
-| Round Robin       |          10 |            43.02 |    57.78 |    65.22 |             230.82 |         0% |
-| Round Robin       |          20 |            79.69 |   110.38 |   125.11 |             248.57 |         0% |
-| Round Robin       |          50 |           189.46 |   258.24 |   299.88 |             258.51 |         0% |
-| Least Connections |           1 |            15.45 |    17.88 |    24.36 |              64.36 |         0% |
-| Least Connections |           5 |            25.06 |    31.90 |    36.91 |             198.14 |         0% |
-| Least Connections |          10 |            45.96 |    64.08 |    80.62 |             216.43 |         0% |
-| Least Connections |          20 |            83.18 |   117.83 |   148.12 |             238.45 |         0% |
-| Least Connections |          50 |           195.40 |   263.96 |   302.64 |             250.82 |         0% |
+| Concurrency | Avg Latency (ms) | P50 (ms) | P95 (ms) | P99 (ms) | Throughput (req/s) | Error Rate |
+| ----------: | ---------------: | -------: | -------: | -------: | -----------------: | ---------: |
+|           1 |            15.45 |    15.13 |    17.88 |    24.36 |              64.36 |         0% |
+|           5 |            25.06 |    24.67 |    31.90 |    36.91 |             198.14 |         0% |
+|          10 |            45.96 |    44.73 |    64.08 |    80.62 |             216.43 |         0% |
+|          20 |            83.18 |    81.55 |   117.83 |   148.12 |             238.45 |         0% |
+|          50 |           195.40 |   194.73 |   263.96 |   302.64 |             250.82 |         0% |
 
 ---
 
-## Results Analysis
+# Results Interpretation
 
-Round Robin achieved slightly better performance across the tested workloads.
+Under the tested homogeneous workload, **Round Robin performed slightly better overall**.
 
 At concurrency 50:
 
-```text
-Round Robin
-Throughput:       258.51 req/s
-Average latency:  189.46 ms
-P95 latency:      258.24 ms
-P99 latency:      299.88 ms
-```
+* Round Robin average latency: **189.46 ms**
+* Least Connections average latency: **195.40 ms**
 
-Compared with:
+Round Robin also achieved higher throughput:
 
-```text
-Least Connections
-Throughput:       250.82 req/s
-Average latency:  195.40 ms
-P95 latency:      263.96 ms
-P99 latency:      302.64 ms
-```
+* Round Robin: **258.51 req/s**
+* Least Connections: **250.82 req/s**
 
-Both strategies achieved:
+P95 and P99 latency were also slightly lower for Round Robin.
 
-```text
-0% error rate
-```
+The most likely explanation is that all workers had approximately similar processing characteristics. Therefore, Least Connections had limited opportunity to improve scheduling based on worker load, while maintaining additional connection bookkeeping and health-check overhead.
 
-across all tested configurations.
+### Important conclusion
 
-### Interpretation
+The result should **not** be interpreted as:
 
-The current workers have relatively similar processing characteristics, and the benchmark workload is homogeneous.
+> Round Robin is always better than Least Connections.
 
-Therefore, Least Connections does not gain a significant advantage from dynamically selecting the least busy worker.
+The more accurate conclusion is:
 
-Instead, connection tracking and additional health-check operations introduce some overhead.
+> Under the tested homogeneous workload, Round Robin achieved slightly better performance than Least Connections because the workers had similar processing characteristics and Least Connections provided limited scheduling benefit.
 
-In this particular workload, **Round Robin provides better throughput and slightly lower latency**.
-
-However, this does not mean Round Robin is universally better.
-
-With:
-
-* heterogeneous workers,
-* different worker capacities,
-* variable request execution times,
-* uneven workloads,
-
-Least Connections may provide better load distribution.
-
-The experiment therefore demonstrates an important distributed-systems principle:
-
-> Load-balancing strategies should be evaluated experimentally under representative workloads rather than assuming that a more dynamic strategy will always provide better performance.
+Different workloads, especially heterogeneous request durations or uneven worker capacities, could produce different results.
 
 ---
 
-# Benchmark Visualization
+# Performance Metrics
 
-The benchmark results are visualized using Matplotlib.
+## Average Latency
 
-Generated plots include:
+Average latency represents the mean response time.
+
+It provides a useful overall measurement but can hide slow outliers.
+
+---
+
+## P50
+
+P50 is the median latency.
+
+Approximately half of the requests are at or below this value.
+
+---
+
+## P95
+
+P95 indicates the latency below which approximately 95% of requests complete.
+
+It is useful for observing tail behavior without being dominated by the extreme slowest requests.
+
+---
+
+## P99
+
+P99 indicates the latency below which approximately 99% of requests complete.
+
+It provides a stronger view of extreme tail latency.
+
+---
+
+## Throughput
+
+Throughput measures how many requests the system processes per second.
+
+Higher throughput is generally desirable, provided latency and error rate remain acceptable.
+
+---
+
+# Performance Visualization
+
+Benchmark plots are generated for:
 
 ```text
 benchmark/plots/
+├── average_latency_ms.png
+├── p50_ms.png
+├── p95_ms.png
+├── p99_ms.png
+└── throughput_req_per_second.png
 ```
 
-### Average Latency
+The plots show how each strategy behaves as concurrency increases.
+
+---
+
+# Monitoring
+
+Runtime monitoring was implemented using:
 
 ```text
-benchmark/plots/average_latency_ms.png
+Prometheus
++
+Grafana
 ```
 
-### P50 Latency
+The FastAPI application exposes metrics through:
 
 ```text
-benchmark/plots/p50_ms.png
+/metrics
 ```
 
-### P95 Latency
+using:
 
 ```text
-benchmark/plots/p95_ms.png
+prometheus-fastapi-instrumentator
 ```
 
-### P99 Latency
+Prometheus periodically scrapes the API.
+
+Grafana queries Prometheus using PromQL and visualizes the resulting metrics.
+
+---
+
+# Prometheus Configuration
+
+Current configuration:
+
+```yaml
+global:
+  scrape_interval: 5s
+
+scrape_configs:
+  - job_name: "api"
+    static_configs:
+      - targets: ["api:8000"]
+```
+
+Prometheus therefore collects metrics from the API every five seconds.
+
+Prometheus is available at:
 
 ```text
-benchmark/plots/p99_ms.png
+http://localhost:9090
 ```
 
-### Throughput
+---
+
+# Grafana
+
+Grafana is available at:
 
 ```text
-benchmark/plots/throughput_req_per_sec.png
+http://localhost:3000
 ```
 
-These plots make it easier to observe how latency and throughput change as concurrency increases.
+The dashboard currently monitors:
+
+* Request Throughput
+* P95 Request Latency
+* P99 Request Latency
+
+---
+
+# PromQL Examples
+
+## Request Throughput
+
+```promql
+sum(
+  rate(
+    http_requests_total{
+      handler="/predict",
+      status="2xx"
+    }[5m]
+  )
+)
+```
+
+This estimates successful `/predict` requests per second over the last five minutes.
+
+---
+
+## P95 Latency
+
+```promql
+histogram_quantile(
+  0.95,
+  sum(
+    rate(
+      http_request_duration_highr_seconds_bucket[5m]
+    )
+  ) by (le)
+)
+```
+
+This calculates the 95th percentile of the instrumented HTTP request-duration histogram.
+
+---
+
+## P99 Latency
+
+```promql
+histogram_quantile(
+  0.99,
+  sum(
+    rate(
+      http_request_duration_highr_seconds_bucket[5m]
+    )
+  ) by (le)
+)
+```
+
+This calculates the 99th percentile.
+
+---
+
+# Understanding the Histogram
+
+The latency metric:
+
+```text
+http_request_duration_highr_seconds_bucket
+```
+
+is a histogram bucket metric.
+
+Conceptually, requests are grouped into latency boundaries such as:
+
+```text
+≤ 0.01 s
+≤ 0.025 s
+≤ 0.05 s
+≤ 0.1 s
+≤ 0.25 s
+≤ 0.5 s
+≤ 1 s
+...
+```
+
+The `le` label represents:
+
+```text
+less than or equal to
+```
+
+The histogram allows Prometheus to estimate quantiles such as P95 and P99.
+
+---
+
+# Docker
+
+The project uses Docker to package the application and its dependencies into reproducible environments.
+
+Dockerfile:
+
+```dockerfile
+FROM python:3.14-slim
+
+WORKDIR /app
+
+COPY requirements.txt .
+
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY . .
+
+CMD ["python", "main.py"]
+```
+
+---
+
+# Docker Compose
+
+The complete system is orchestrated using Docker Compose.
+
+Services:
+
+```text
+api
+worker1
+worker2
+worker3
+prometheus
+grafana
+```
+
+Ports:
+
+| Service    | Port |
+| ---------- | ---: |
+| API        | 8000 |
+| Worker 1   | 8001 |
+| Worker 2   | 8002 |
+| Worker 3   | 8003 |
+| Prometheus | 9090 |
+| Grafana    | 3000 |
 
 ---
 
 # Running the Project
 
-## 1. Clone the Repository
+Clone the repository:
 
 ```bash
 git clone https://github.com/Nacmkoohes/Distributed_ML_Interface.git
 cd Distributed_ML_Interface
 ```
 
----
-
-## 2. Create a Virtual Environment
+Create and activate a virtual environment:
 
 ```bash
-python3 -m venv .venv
-```
-
-Activate it:
-
-### macOS / Linux
-
-```bash
+python -m venv .venv
 source .venv/bin/activate
 ```
 
-### Windows
-
-```powershell
-.venv\Scripts\activate
-```
-
----
-
-## 3. Install Dependencies
+Install dependencies:
 
 ```bash
 pip install -r requirements.txt
@@ -521,33 +680,24 @@ pip install -r requirements.txt
 
 ---
 
-# Running with Docker Compose
+## Run with Docker Compose
 
-Build the containers:
-
-```bash
-docker compose build
-```
-
-Start the system:
+Start the complete system:
 
 ```bash
-docker compose up -d
+docker compose up --build
 ```
 
-Check running containers:
+Run in detached mode:
+
+```bash
+docker compose up -d --build
+```
+
+Check services:
 
 ```bash
 docker compose ps
-```
-
-The architecture exposes:
-
-```text
-API       → localhost:8000
-Worker 1  → localhost:8001
-Worker 2  → localhost:8002
-Worker 3  → localhost:8003
 ```
 
 ---
@@ -595,265 +745,287 @@ Example response:
 
 ---
 
-# Selecting the Load-Balancing Strategy
+## Prometheus Metrics
 
-The strategy is configured using the `LOAD_BALANCER` environment variable.
-
-For Round Robin:
-
-```yaml
-environment:
-  LOAD_BALANCER: round_robin
+```http
+GET /metrics
 ```
 
-For Least Connections:
+Example:
 
-```yaml
-environment:
-  LOAD_BALANCER: least_connections
-```
-
-The current Docker Compose configuration uses:
-
-```yaml
-LOAD_BALANCER: least_connections
+```bash
+curl http://localhost:8000/metrics
 ```
 
 ---
 
-# Running Tests
+# Testing
 
-Run the complete test suite with:
+Run the test suite with:
 
 ```bash
-python -m pytest -q
+python -m pytest
 ```
 
-The tests cover load-balancer behavior including:
+Using:
 
-* Worker selection
-* Connection tracking
-* Finishing requests
-* Worker recovery
-* Health checks
-* Ignoring unhealthy workers
-* Handling the case where no healthy workers are available
+```bash
+python -m pytest
+```
+
+is preferred in this environment because the global `pytest` executable may point to a different Python installation.
 
 ---
 
-# Running Benchmarks
-
-The benchmark script accepts:
-
-```bash
-python benchmark/baseline.py <concurrency> <strategy>
-```
-
-For example:
-
-```bash
-python benchmark/baseline.py 10 round_robin
-```
-
-or:
-
-```bash
-python benchmark/baseline.py 10 least_connections
-```
-
-Example workload:
-
-```bash
-python benchmark/baseline.py 50 round_robin
-python benchmark/baseline.py 50 least_connections
-```
-
-The results are appended to:
+# Project Structure
 
 ```text
-benchmark/results.csv
+Distributed_ML_Interface/
+│
+├── benchmark/
+│   ├── results.csv
+│   ├── benchmark.py
+│   └── plots/
+│       ├── average_latency_ms.png
+│       ├── p50_ms.png
+│       ├── p95_ms.png
+│       ├── p99_ms.png
+│       └── throughput_req_per_second.png
+│
+├── load_balancer/
+│   ├── round_robin.py
+│   └── least_connections.py
+│
+├── ml/
+│   └── model.joblib
+│
+├── services/
+│   └── prediction.py
+│
+├── workers/
+│   └── worker.py
+│
+├── tests/
+│   └── ...
+│
+├── main.py
+├── Dockerfile
+├── docker-compose.yml
+├── prometheus.yml
+├── requirements.txt
+├── README.md
+└── READING.md
 ```
-
----
-
-# Generating Plots
-
-After collecting benchmark results:
-
-```bash
-python benchmark/plot_results.py
-```
-
-The generated plots are saved under:
-
-```text
-benchmark/plots/
-```
-
----
-
-# Learning Documentation
-
-The development and learning process is documented in:
-
-```text
-LEARNING.md
-```
-
-The learning notes cover topics including:
-
-* FastAPI
-* Docker
-* Distributed inference
-* Load balancing
-* Round Robin
-* Least Connections
-* Benchmarking
-* Latency
-* P50 / P95 / P99
-* Throughput
-* Fault tolerance
-* Failover
-* Automated testing
-* Benchmark visualization
 
 ---
 
 # Development Progress
 
-The project has been developed incrementally.
+The project was developed incrementally.
 
-### Completed
+### Phase 1 — ML Inference
 
-* [x] FastAPI inference API
-* [x] ML prediction service
-* [x] Multiple ML workers
-* [x] Docker containerization
-* [x] Docker Compose orchestration
-* [x] Round Robin load balancing
-* [x] Least Connections load balancing
-* [x] Worker health checking
-* [x] Request retry/failover
-* [x] Worker failure testing
-* [x] Worker recovery testing
-* [x] Automated load-balancer tests
-* [x] Benchmark automation
-* [x] Benchmark result collection
-* [x] P50/P95/P99 latency analysis
-* [x] Throughput analysis
-* [x] Benchmark visualization
-* [x] Benchmark comparison
+* ML model preparation
+* Prediction service
+* Model loading
+* Prediction endpoint
 
-### Planned
+### Phase 2 — Distributed Workers
 
-* [ ] Prometheus metrics
-* [ ] Grafana monitoring dashboard
-* [ ] CPU and memory utilization analysis
-* [ ] More realistic heterogeneous workloads
-* [ ] Improved worker health-state management
-* [ ] Circuit breaker
-* [ ] More robust failure detection
-* [ ] Locust-based load testing
-* [ ] More advanced scalability experiments
-* [ ] Additional load-balancing strategies
+* Worker abstraction
+* Multiple worker instances
+* Worker IDs
+* Health endpoint
+
+### Phase 3 — Load Balancing
+
+* Round Robin
+* Least Connections
+* Strategy selection
+
+### Phase 4 — Testing
+
+* Worker tests
+* Load balancer tests
+* API tests
+* Integration testing
+
+### Phase 5 — Docker
+
+* Dockerfile
+* Docker Compose
+* Multi-worker deployment
+* Container networking
+
+### Phase 6 — Benchmarking
+
+* Concurrency experiments
+* Latency measurement
+* P50/P95/P99
+* Throughput
+* Error rate
+* CSV results
+* Performance plots
+
+### Phase 7 — Fault Tolerance
+
+* Worker failure injection
+* Health checking
+* Retry
+* Failover
+* Worker recovery
+
+### Phase 8 — Monitoring
+
+* Prometheus instrumentation
+* `/metrics`
+* Prometheus scraping
+* Grafana integration
+* Request throughput dashboard
+* P95 dashboard
+* P99 dashboard
+
+---
+
+# Design Decisions
+
+## Why three workers?
+
+Three workers provide enough parallelism to demonstrate load balancing and worker failure without making the experimental setup unnecessarily complex.
+
+## Why compare Round Robin and Least Connections?
+
+They represent two fundamentally different scheduling approaches:
+
+* Round Robin uses a fixed rotation.
+* Least Connections considers current active workload.
+
+This creates a meaningful comparison for a distributed inference service.
+
+## Why keep the ML model simple?
+
+The research focus is system behavior rather than model architecture.
+
+A lightweight model allows the experiments to focus on:
+
+* scheduling
+* concurrency
+* latency
+* throughput
+* fault tolerance
+
+rather than GPU/model-training complexity.
+
+## Why Docker Compose instead of Kubernetes?
+
+The project focuses on understanding distributed-system concepts first.
+
+Docker Compose provides:
+
+* isolated services
+* reproducible environments
+* service discovery
+* multi-worker deployment
+
+without introducing Kubernetes complexity before it is necessary.
+
+Kubernetes is considered possible future work.
 
 ---
 
 # Limitations
 
-The current implementation has several limitations.
+The current system is an experimental platform rather than a production-ready inference service.
 
-### Homogeneous Workers
+Current limitations include:
 
-All workers currently run the same model with similar computational characteristics.
+* Workers are homogeneous.
+* The load balancer runs in the API process.
+* Least Connections uses in-memory connection counters.
+* Retry logic is intentionally simple.
+* Health checks are basic HTTP health checks.
+* No persistent distributed state exists for load-balancer counters.
+* No authentication or authorization layer is implemented.
+* No production-grade circuit breaker is implemented.
+* Resource monitoring is not yet a complete CPU/memory observability system.
+* The benchmark workload is controlled and relatively small.
+* Grafana latency monitoring currently uses the available HTTP histogram rather than a dedicated inference-latency metric.
 
-This limits the advantage that Least Connections might provide in heterogeneous environments.
-
-### Simple Health Checking
-
-Worker health is currently based primarily on HTTP reachability.
-
-A production system would require richer health signals and state management.
-
-### In-Memory Connection Tracking
-
-Least Connections maintains active connection counts in memory inside the API process.
-
-This is sufficient for the current experimental setup but would require a more robust design for horizontally scaled API gateways.
-
-### Synthetic Benchmark Workload
-
-The benchmark uses a fixed prediction request and controlled concurrency.
-
-Real-world inference workloads would contain different request patterns and execution times.
+These limitations define the boundary of the current experiment rather than being hidden assumptions.
 
 ---
 
 # Future Work
 
-The next stages of the project focus on improving observability, realism, and fault tolerance.
+Possible extensions include:
 
-## Monitoring
+* Kubernetes deployment
+* Horizontal Pod Autoscaling
+* Heterogeneous worker capacities
+* Variable inference workloads
+* More realistic workload generation
+* Circuit breaker implementation
+* Exponential backoff
+* Worker quarantine
+* Distributed load-balancer state
+* CPU and memory monitoring
+* OpenTelemetry integration
+* Alerting
+* Distributed tracing
+* Persistent experiment storage
 
-Prometheus and Grafana will be introduced to monitor:
-
-* Request rate
-* Latency
-* Error rate
-* Worker utilization
-* CPU usage
-* Memory usage
-* Worker health
-
-## More Realistic Workloads
-
-Future experiments will introduce:
-
-* Different request processing times
-* Uneven worker capacities
-* Different workload distributions
-* Higher concurrency
-* Longer-running inference requests
-
-This will allow a more meaningful comparison between Round Robin and Least Connections.
-
-## Fault Tolerance
-
-Future fault-tolerance improvements include:
-
-* Circuit breaker
-* Better failure detection
-* Worker state management
-* Recovery-time measurement
-* More controlled mid-request failure experiments
-
-## Advanced Load Testing
-
-Locust will eventually be used for more realistic distributed load testing.
+These are intentionally outside the current project scope.
 
 ---
 
 # Research Focus
 
-The project is primarily a **distributed systems and machine learning infrastructure experiment**, rather than a model-development project.
+The main contribution of the project is not the ML model itself.
 
-The main research dimensions are:
+The project focuses on understanding how a distributed inference system behaves when:
 
 ```text
-Load Balancing
-      |
-      +---- Performance
-      |
-      +---- Scalability
-      |
-      +---- Fault Tolerance
-      |
-      +---- Resource Efficiency
-      |
-      +---- Reliability
+Workload increases
+        ↓
+Concurrency increases
+        ↓
+Workers become more loaded
+        ↓
+Latency increases
+        ↓
+Tail latency becomes important
+        ↓
+Load-balancing strategy affects performance
 ```
 
-The machine learning model serves as the inference workload, while the main engineering focus is the distributed system surrounding it.
+The experimental results show that under the current homogeneous workload, Round Robin performs slightly better than Least Connections.
+
+However, the results are workload-dependent and should not be generalized to all distributed systems.
+
+---
+
+# Key Takeaways
+
+This project demonstrates practical experience with:
+
+* Distributed systems
+* Load balancing
+* Fault tolerance
+* Failure recovery
+* REST APIs
+* ML inference
+* Docker
+* Docker Compose
+* Performance benchmarking
+* Prometheus
+* PromQL
+* Grafana
+* Latency analysis
+* Throughput analysis
+* Python testing
+* Git/GitHub
+
+The project combines machine learning with backend and distributed-systems engineering, with the primary emphasis on **system performance and reliability**.
 
 ---
 
@@ -861,17 +1033,9 @@ The machine learning model serves as the inference workload, while the main engi
 
 **Nasim Koohestani**
 
-Computer Science Graduate
+Computer Engineering / Computer Science
+
 Amirkabir University of Technology
 
-GitHub:
+GitHub: [Nacmkoohes](https://github.com/Nacmkoohes)
 
-```text
-https://github.com/Nacmkoohes
-```
-
----
-
-# License
-
-This project is intended for educational and research purposes.
