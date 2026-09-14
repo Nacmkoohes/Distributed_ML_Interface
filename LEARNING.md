@@ -2822,3 +2822,318 @@ The comparison will focus on:
 * Resource utilization
 * Behavior under increasing concurrency
 * Worker failure and recovery
+# Day 11 — Benchmarking Fundamentals
+
+## What I learned
+
+The goal of benchmarking is to measure how the distributed inference system behaves under different workloads.
+
+Important metrics:
+
+* **Average Latency:** Average time required to process a request.
+* **P50 Latency:** Median latency. 50% of requests are faster than this value.
+* **P95 Latency:** 95% of requests are faster than this value.
+* **P99 Latency:** 99% of requests are faster than this value.
+* **Throughput:** Number of requests processed per second.
+* **Error Rate:** Percentage of unsuccessful requests.
+
+### Concurrency
+
+Concurrency represents how many requests are being processed or attempted at the same time.
+
+The benchmark uses different concurrency levels:
+
+```text
+1 → 5 → 10 → 20 → 50
+```
+
+The purpose is to observe how the system behaves as the workload increases.
+
+---
+
+# Day 12 — Automated Benchmark
+
+## What I learned
+
+The benchmark was automated using Python's `ThreadPoolExecutor`.
+
+The benchmark sends multiple requests concurrently to:
+
+```text
+POST /predict
+```
+
+The benchmark runs multiple times for each configuration and calculates:
+
+* Average latency
+* P50
+* P95
+* P99
+* Throughput
+* Error rate
+
+Results are stored in:
+
+```text
+benchmark/results.csv
+```
+
+The CSV allows different load-balancing strategies to be compared using the same workload.
+
+## Strategies compared
+
+### Round Robin
+
+Requests are distributed sequentially between workers:
+
+```text
+Request 1 → Worker 1
+Request 2 → Worker 2
+Request 3 → Worker 3
+Request 4 → Worker 1
+...
+```
+
+### Least Connections
+
+The load balancer selects the healthy worker with the fewest active connections.
+
+```text
+Worker 1 → 3 connections
+Worker 2 → 1 connection  ← selected
+Worker 3 → 2 connections
+```
+
+## Benchmark conclusion
+
+For the current homogeneous workload, Round Robin performed slightly better than Least Connections.
+
+At concurrency 50:
+
+```text
+Round Robin:
+Throughput ≈ 258.5 req/s
+Average latency ≈ 189.5 ms
+
+Least Connections:
+Throughput ≈ 250.8 req/s
+Average latency ≈ 195.4 ms
+```
+
+All benchmark configurations had:
+
+```text
+Error rate = 0%
+```
+
+A possible explanation is that all workers have similar processing times. Therefore, Least Connections does not gain a significant advantage from dynamically selecting the least busy worker, while it introduces additional health-check and connection-tracking overhead.
+
+---
+
+# Day 13 — Fault Tolerance and Failover
+
+## What I learned
+
+A distributed system should continue serving requests when one worker becomes unavailable.
+
+The system was tested by stopping a worker container:
+
+```bash
+docker compose stop worker1
+```
+
+The API detected that the worker was unavailable and selected another healthy worker.
+
+Example:
+
+```text
+Worker 1 → unavailable
+Worker 2 → healthy
+Worker 3 → healthy
+
+Request → Worker 2
+```
+
+The worker was then restarted:
+
+```bash
+docker compose up -d worker1
+```
+
+After recovery, the worker became available to the load balancer again.
+
+## Retry and Failover
+
+Retry logic was added to the API gateway.
+
+If a request to a worker fails, the API can attempt another worker instead of immediately returning an error.
+
+Conceptually:
+
+```text
+Client
+  ↓
+API
+  ↓
+Worker 1
+  X failure
+  ↓
+Retry
+  ↓
+Worker 2
+  ↓
+Response
+```
+
+This improves the availability of the inference service.
+
+## Important limitation
+
+The current health check mainly verifies whether the worker's HTTP endpoint is reachable.
+
+A production implementation could improve this using:
+
+* Temporary unhealthy state
+* Failed-worker exclusion
+* Circuit breaker
+* Better retry policies
+* Failure counters
+* Recovery detection
+
+---
+
+# Day 14 — Testing Load Balancer Fault Handling
+
+## What I learned
+
+Unit tests were expanded for the `LeastConnectionsLoadBalancer`.
+
+The tests verify:
+
+* Selecting the worker with the fewest connections
+* Updating active connection counts
+* Finishing requests correctly
+* Ignoring unhealthy workers
+* Raising an error when no workers are healthy
+* Using a worker again after recovery
+
+Example:
+
+```text
+Worker 1 → unhealthy
+Worker 2 → healthy, 1 connection
+Worker 3 → healthy, 2 connections
+
+Selected:
+Worker 2
+```
+
+After Worker 1 recovers:
+
+```text
+Worker 1 → healthy, 0 connections
+Worker 2 → healthy, 1 connection
+Worker 3 → healthy, 2 connections
+
+Selected:
+Worker 1
+```
+
+The project test suite passed after cleaning up duplicate test definitions.
+
+The tests help verify that the load balancer behaves correctly before relying on it in the Docker-based distributed system.
+
+---
+
+# Day 15 — Benchmark Visualization and Analysis
+
+## What I learned
+
+Benchmark results are more useful when they are visualized.
+
+The existing plotting script reads:
+
+```text
+benchmark/results.csv
+```
+
+using Pandas and creates plots using Matplotlib.
+
+Generated metrics:
+
+```text
+average_latency_ms.png
+p50_ms.png
+p95_ms.png
+p99_ms.png
+throughput_req_per_sec.png
+```
+
+They are stored in:
+
+```text
+benchmark/plots/
+```
+
+## Main observations
+
+### Throughput
+
+Round Robin achieved higher throughput at every tested concurrency level.
+
+At concurrency 50:
+
+```text
+Round Robin ≈ 258.5 req/s
+Least Connections ≈ 250.8 req/s
+```
+
+### Average Latency
+
+Round Robin also had lower average latency at every tested concurrency.
+
+At concurrency 50:
+
+```text
+Round Robin ≈ 189.5 ms
+Least Connections ≈ 195.4 ms
+```
+
+### P95 Latency
+
+Round Robin had lower P95 latency across all tested concurrency levels.
+
+At concurrency 50:
+
+```text
+Round Robin ≈ 258.2 ms
+Least Connections ≈ 264.0 ms
+```
+
+## Current Research Finding
+
+For the current homogeneous workload:
+
+```text
+Round Robin > Least Connections
+```
+
+in terms of:
+
+* Throughput
+* Average latency
+* P95 latency
+
+This does **not** mean Round Robin is universally better.
+
+The result is specific to the current workload and worker characteristics.
+
+A heterogeneous workload, where workers have different processing times or requests have different execution durations, may give Least Connections a stronger advantage.
+
+## Research Insight
+
+The important lesson is that a load-balancing strategy should be evaluated experimentally rather than assuming that a more dynamic strategy will always perform better.
+
+The benchmark provides experimental evidence for the research question:
+
+> How do different load-balancing strategies affect the scalability, performance, and resource efficiency of a distributed machine learning inference system?
