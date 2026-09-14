@@ -1,3 +1,5 @@
+import time
+
 from fastapi import FastAPI
 from pydantic import BaseModel
 import  os
@@ -25,6 +27,7 @@ class MLWorker:
         self.is_healthy = True
 
     def predict(self, user_id: int, movie_id: int) -> float:
+        # time.sleep(2)
         return predict_rating(user_id, movie_id)
 
     def health_check(self) -> bool:

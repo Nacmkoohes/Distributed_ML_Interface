@@ -27,31 +27,38 @@ else:
 
 @app.post("/predict")
 def predict(request: PredictionRequest):
-    worker_url = load_balancer.get_next_worker()
-    if strategy == "least_connections":
-        load_balancer.start_request(worker_url)
+    for attempt in range(2):
 
-    try:
-        response = requests.post(
-            f"{worker_url}/predict",
-            json={
+        worker_url = load_balancer.get_next_worker()
+
+        if strategy == "least_connections":
+            load_balancer.start_request(worker_url)
+
+        try:
+            response = requests.post(
+                f"{worker_url}/predict",
+                json={
+                    "user_id": request.user_id,
+                    "movie_id": request.movie_id,
+                },
+                timeout=5,
+            )
+
+            worker_result = response.json()
+
+            return {
                 "user_id": request.user_id,
                 "movie_id": request.movie_id,
-            },
-        )
+                "predicted_rating": worker_result["predicted_rating"],
+                "worker_id": worker_result["worker_id"],
+            }
+        except requests.RequestException:
+            if attempt==1:
+                raise
 
-        worker_result = response.json()
-
-        return {
-            "user_id": request.user_id,
-            "movie_id": request.movie_id,
-            "predicted_rating": worker_result["predicted_rating"],
-            "worker_id": worker_result["worker_id"],
-        }
-
-    finally:
-        if strategy == "least_connections":
-            load_balancer.finish_request(worker_url)
+        finally:
+            if strategy == "least_connections":
+                load_balancer.finish_request(worker_url)
 
 @app.get('/health')
 def health():
