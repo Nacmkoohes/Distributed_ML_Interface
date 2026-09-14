@@ -861,7 +861,7 @@ The machine learning model serves as the inference workload, while the main engi
 
 **Nasim Koohestani**
 
-Computer Engineering Graduate
+Computer Science Graduate
 Amirkabir University of Technology
 
 GitHub:

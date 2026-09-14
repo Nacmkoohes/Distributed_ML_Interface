@@ -4,9 +4,11 @@ import requests
 from load_balancer.round_robin import RoundRobinLoadBalancer
 from load_balancer.least_connections import LeastConnectionsLoadBalancer
 from workers.worker import MLWorker
+from prometheus_fastapi_instrumentator import Instrumentator
 import  os
 
 app=FastAPI()
+Instrumentator().instrument(app).expose(app)
 
 class PredictionRequest(BaseModel):
     user_id:int
